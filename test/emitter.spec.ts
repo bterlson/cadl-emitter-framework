@@ -5,7 +5,7 @@ import {emitCadlFile, getHostForCadlFile} from "./host.js";
 import { getIntrinsicModelName, Model, navigateProgram, getDoc } from "@cadl-lang/compiler";
 import prettier from "prettier";
 
-const instrinsicNameToTSType = new Map<string, string>([
+const intrinsicNameToTSType = new Map<string, string>([
   ["string", "string"],
   ["int32", "number"],
   ["int16", "number"],
@@ -14,6 +14,10 @@ const instrinsicNameToTSType = new Map<string, string>([
   ["int64", "bigint"],
   ["boolean", "boolean"],
 ]);
+
+function isArray(m: Model) {
+  return m.name === "Array";
+}
 
 test('emits models to a single file', async (t) => {
   const host = await getHostForCadlFile(`
@@ -30,6 +34,10 @@ test('emits models to a single file', async (t) => {
     model Template<T> { prop: T }
     model HasTemplates { x: Template<Basic> }
     model IsTemplate is Template<Basic>;
+    model HasRef {
+      x: Basic.x;
+      y: RefsOtherModel.x;
+    }
   `);
   const program = host.program;
   const context = createEmitterContext(host.program);
@@ -43,24 +51,59 @@ test('emits models to a single file', async (t) => {
   emitter.pushScope(outputFile.globalScope);
 
   emitter.addTypeEmitter({
-    Model(m, emitter) {
-      const intrinsicName = getIntrinsicModelName(program, m);
-      if (intrinsicName) {
-        if (!instrinsicNameToTSType.has(intrinsicName)) {
-          throw new Error("Unknown intrinsic type " + intrinsicName);
+    Model: {
+      scalar(m, name) {
+        if (!intrinsicNameToTSType.has(name)) {
+          throw new Error("Unknown scalar type " + name);
         }
         
-        const code = instrinsicNameToTSType.get(intrinsicName)!;
+        const code = intrinsicNameToTSType.get(name)!;
         return emitter.createLiteral(m, code);
-      }
+      },
 
-      const props: string[] = [];
-    
-      for (const prop of m.properties.values()) {
+      literal(m) {
+        if (isArray(m)) {
+          return emitter.createLiteral(m, `${emitter.emitTypeReference(m.indexer!.value!)}[]`);
+        }
+
+        return emitter.createLiteral(m, `{ ${emitter.emitModelProperties(m, m.properties) }}`);
+      },
+
+      declaration(m, name) {
+        let extendsClause = "";
+        if (m.indexer && m.indexer.key!.name === "integer") {
+          extendsClause = `extends Array<${emitter.emitTypeReference(m.indexer!.value!)}>`
+        } else if (m.baseModel) {
+          extendsClause = `extends ${emitter.emitTypeReference(m.baseModel)}`
+        }
+  
+        let comment = getDoc(program, m);
+        let code = '';
+  
+        if (comment) {
+          code += `
+            /**
+             * ${comment}
+             */
+          `
+        }
+        code += `interface ${name} ${extendsClause} {
+          ${emitter.emitModelProperties(m, m.properties)}
+        }`;
+  
+        return emitter.createDeclaration(m, name, code);
+      },
+
+      properties(m, properties) {
+        return Array.from(properties.values()).map(p => emitter.emitModelProperty(p)).join(",");
+      }
+    },
+    ModelProperty: {
+      literal(prop) {
         const name = prop.name === "_" ? "statusCode" : prop.name;
         const doc = getDoc(program, prop);
         let docString = '';
-
+  
         if (doc) {
           docString = `
           /**
@@ -68,53 +111,17 @@ test('emits models to a single file', async (t) => {
            */
           `
         }
-        props.push(
+        
+        return emitter.createLiteral(prop, 
           `${docString}${name}${prop.optional ? "?" : ""}: ${
-            emitter.getTypeReference(prop.type)
+            emitter.emitTypeReference(prop.type)
           }`
         );
+      },
+      reference(prop) {
+        return emitter.emitTypeReference(prop.type);
       }
-
-      const name = emitter.getDeclarationName(m);
-
-      if (!name) {
-        const code = `{
-          ${props.join(",")}
-        }`;
-
-        return emitter.createLiteral(m, code);
-      } else if (m.name === "Array") {
-        // assumption: it seems like Array can always an array expression?
-        // Otherwise needed to be model is?
-        // assumption: array literals don't have regular properties?
-        const code = `${emitter.getTypeReference(m.indexer!.value!)}[]`
-        return emitter.createLiteral(m, code);
-      }
-
-      let extendsClause = "";
-      if (m.indexer && m.indexer.key!.name === "integer") {
-        extendsClause = `extends Array<${emitter.getTypeReference(m.indexer!.value!)}>`
-      } else if (m.baseModel) {
-        extendsClause = `extends ${emitter.getTypeReference(m.baseModel)}`
-      }
-
-      let comment = getDoc(program, m);
-      let code = '';
-
-      if (comment) {
-        code += `
-          /**
-           * ${comment}
-           */
-        `
-      }
-      code += `interface ${name} ${extendsClause} {
-        ${props.join(",")}
-      }`;
-
-      return emitter.createDeclaration(m, name, code);
     },
-
     sourceFile(s) {
       const sourceFile: EmittedSourceFile = {
         path: s.path,
@@ -133,11 +140,10 @@ test('emits models to a single file', async (t) => {
     }
   })
 
-
   navigateProgram(program, {
     model(m) {
       if (m.namespace?.name === "Cadl") { return }
-      emitter.emit(m)
+      emitter.emitType(m)
     }
   });
 
@@ -145,6 +151,7 @@ test('emits models to a single file', async (t) => {
 
   console.log(host.fs.get("Z:/test/output.ts"));
 });
+
 
 test.only('emits models to one model per file', async (t) => {
   const host = await getHostForCadlFile(`
@@ -161,6 +168,10 @@ test.only('emits models to one model per file', async (t) => {
     model Template<T> { prop: T }
     model HasTemplates { x: Template<Basic> }
     model IsTemplate is Template<Basic>;
+    model HasRef {
+      x: Basic.x;
+      y: RefsOtherModel.x;
+    }
   `);
   const program = host.program;
   const context = createEmitterContext(host.program);
@@ -172,113 +183,84 @@ test.only('emits models to one model per file', async (t) => {
   const emitter = context.createAssetEmitter(context.AssetTag.language("typescript"));
 
   emitter.addTypeEmitter({
-    Model(m, emitter) {
-      // step 1: handle cadl intrinsics by mapping to the corresponding
-      // typescript type
-      const intrinsicName = getIntrinsicModelName(program, m);
-      if (intrinsicName) {
-        if (!instrinsicNameToTSType.has(intrinsicName)) {
-          throw new Error("Unknown intrinsic type " + intrinsicName);
+    Model: {
+      scalar(m, name) {
+        if (!intrinsicNameToTSType.has(name)) {
+          throw new Error("Unknown scalar type " + name);
         }
         
-        const code = instrinsicNameToTSType.get(intrinsicName)!;
+        const code = intrinsicNameToTSType.get(name)!;
         return emitter.createLiteral(m, code);
-      }
+      },
 
-      // step 2: see if we're emitting a declaration or a literal.
-      // * If the model has no name, emit a literal.
-      // * If the model is an instantiation of Array, emit a literal.
-      // * Otherwise, emit a declaration
-      //
-      // This means that template instantiations, while generally not explicitly
-      // declared in the cadl, get a declaration. This makes sense as templates
-      // are declaration templates and so every instantiation gets a declaration.
-      const name = getModelDeclarationName(m);
-
-      if (!name) {
-        // it might be tempting to create the code for props early, but we actually
-        // can't do that because the source scope of any references in the properties
-        // is different depending on if we're ultimately making a new declaration or
-        // we're emitting a literal that will presumably be used in another declaration
-
-        const code = `{
-          ${emitProps()}
-        }`;
-        return emitter.createLiteral(m, code);
-      } else if (m.name === "Array") {
-        // assumption: it seems like Array is always an array expression?
-        //   i.e. that if we have a generically named Array model it means
-        //   we didn't give it a better name with `model is` and so we
-        //   presumably found this type by walking into it from some container
-        //   type that references it, and so we just need to emit a literal.
-        // assumption: array literals don't have regular properties?
-        const code = `${emitter.getTypeReference(m.indexer!.value!)}[]`;
-        return emitter.createLiteral(m, code);
-      }
-
-      // We are emitting a declaration, so create a source file for it.
-      const sourceFile = emitter.createSourceFile(`${name}.ts`);
-
-      // Set the new scope, storing off the old scope to restore later.
-      // We will have a scope to restore when in the process of emitting
-      // a model we come across another model that needs a declaration.
-      const oldScope = emitter.setScope(sourceFile.globalScope);
-
-      let extendsClause = "";
-      if (m.indexer && m.indexer.key!.name === "integer") {
-        // special case for when we have a named declaration that is an array
-        // e.g. `model Foo is Array<T>;`
-        extendsClause = `extends Array<${emitter.getTypeReference(m.indexer!.value!)}>`
-      } else if (m.baseModel) {
-        // handle base model
-        // assumption: there is no way that a named array will also have a base model?
-        extendsClause = `extends ${emitter.getTypeReference(m.baseModel)}`
-      }
-
-      let code = '';
-
-      let comment = getDoc(program, m);
-      if (comment) {
-        code += `
-          /**
-           * ${comment}
-           */
-        `
-      }
-      code += `interface ${name} ${extendsClause} {
-        ${emitProps()}
-      }`;
-
-      const decl = emitter.createDeclaration(m, name, code);
-      emitter.restoreScope(oldScope);
-      return decl;
-
-      function emitProps() {
-        const props: string[] = [];
-    
-        for (const prop of m.properties.values()) {
-          const name = prop.name === "_" ? "statusCode" : prop.name;
-          const doc = getDoc(program, prop);
-          let docString = '';
-  
-          if (doc) {
-            docString = `
-            /**
-             * ${doc}
-             */
-            `
-          }
-          props.push(
-            `${docString}${name}${prop.optional ? "?" : ""}: ${
-              emitter.getTypeReference(prop.type)
-            }`
-          );
+      literal(m) {
+        if (isArray(m)) {
+          return emitter.createLiteral(m, `${emitter.emitTypeReference(m.indexer!.value!)}[]`);
         }
 
-        return props.join(",")
+        return emitter.createLiteral(m, `{ ${emitter.emitModelProperties(m, m.properties) }}`);
+      },
+
+      declaration(m, name) {
+        // change 1 - create an output file per declaration
+        const outputFile = emitter.createSourceFile(`${name}.ts`);
+        const oldScope = emitter.setScope(outputFile.globalScope);
+      
+        let extendsClause = "";
+        if (m.indexer && m.indexer.key!.name === "integer") {
+          extendsClause = `extends Array<${emitter.emitTypeReference(m.indexer!.value!)}>`
+        } else if (m.baseModel) {
+          extendsClause = `extends ${emitter.emitTypeReference(m.baseModel)}`
+        }
+  
+        let comment = getDoc(program, m);
+        let code = '';
+  
+        if (comment) {
+          code += `
+            /**
+             * ${comment}
+             */
+          `
+        }
+        code += `export interface ${name} ${extendsClause} {
+          ${emitter.emitModelProperties(m, m.properties)}
+        }`;
+        const decl = emitter.createDeclaration(m, name, code);
+
+        // change 2 - scope management
+        emitter.restoreScope(oldScope);
+        return decl;
+      },
+
+      properties(m, properties) {
+        return Array.from(properties.values()).map(p => emitter.emitModelProperty(p)).join(",");
       }
     },
-
+    ModelProperty: {
+      literal(prop) {
+        const name = prop.name === "_" ? "statusCode" : prop.name;
+        const doc = getDoc(program, prop);
+        let docString = '';
+  
+        if (doc) {
+          docString = `
+          /**
+           * ${doc}
+           */
+          `
+        }
+        
+        return emitter.createLiteral(prop, 
+          `${docString}${name}${prop.optional ? "?" : ""}: ${
+            emitter.emitTypeReference(prop.type)
+          }`
+        );
+      },
+      reference(prop) {
+        return emitter.emitTypeReference(prop.type);
+      }
+    },
     sourceFile(s) {
       const sourceFile: EmittedSourceFile = {
         path: s.path,
@@ -292,55 +274,22 @@ test.only('emits models to one model per file', async (t) => {
       for (const decl of s.declarations) {
         sourceFile.contents += decl.code + "\n";
       }
-
       sourceFile.contents = prettier.format(sourceFile.contents, { parser: "typescript" })
       return sourceFile;
     },
 
-    reference(decl, sourceScope) {
-      // a (mostly) broken implementation of finding the shortest FQI
-      // this can likely be part of the framework, vending you just the target
-      // type and the scope path to get there.
-      if (sourceScope === decl.scope) {
-        return decl.name;
-      }
-      
-      const declChain = scopeChain(decl.scope).reverse();
-      const sourceChain = scopeChain(sourceScope).reverse();
-      let firstDifferentIndex = 0;
-
-      while (true) {
-  
-        if (firstDifferentIndex >= declChain.length || firstDifferentIndex >= sourceChain.length) {
-          break;
-        }
-
-        if (declChain[firstDifferentIndex] !== sourceChain[firstDifferentIndex]) {
-          break;
-        }
-  
-        firstDifferentIndex++;
-      }
-
-      for(let i =0; i < firstDifferentIndex; i++) {
-        declChain.shift();
-        sourceChain.shift();
-      }
-    
-      const sourceSourceFile = sourceChain[0].sourceFile;
-      const declSourceFile = declChain[0].sourceFile;
-
-      sourceSourceFile.imports.set(`./${declSourceFile.path.replace(".js", ".ts")}`, [decl.name]);
-      return declChain.map(s => s.name).join(".") + decl.name;
+    reference(decl, scope) {
+      // change 3 - import the file the type is defined in
+      // todo: handle same-file refs
+      scope.sourceFile.imports.set(`./${decl.scope.sourceFile.path.replace(".js", ".ts")}`, [decl.name]);
+      return decl.name;
     }
   })
-
 
   navigateProgram(program, {
     model(m) {
       if (m.namespace?.name === "Cadl") { return }
-      console.log("Visiting model", m.name);
-      emitter.emit(m)
+      emitter.emitType(m)
     }
   });
 
@@ -348,14 +297,3 @@ test.only('emits models to one model per file', async (t) => {
 
   console.log(host.fs);
 });
-
-function scopeChain(scope: Scope) {
-  const chain = [scope];
-
-  while (scope.parentScope) {
-    chain.push(scope.parentScope);
-    scope = scope.parentScope;
-  }
-  
-  return chain;
-}

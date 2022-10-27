@@ -6,9 +6,9 @@ import {
   Interface,
   Union,
   Operation,
-  Enum
+  Enum,
+  ModelProperty
 } from "@cadl-lang/compiler";
-import { isArray } from "util";
 
 export interface EmitContext {
   AssetTag: AssetTag;
@@ -16,14 +16,17 @@ export interface EmitContext {
 }
 
 export interface AssetEmitter {
-  getTypeReference(type: Type): string;
-  getDeclarationName(type: CadlDeclaration): string;
+
+  emitTypeReference(type: Type): string;
+  emitDeclarationName(type: CadlDeclaration): string;
+  emitType(type: Type): string;
+  emitModelProperties(model: Model, properties: Model["properties"]): string;
+  emitModelProperty(prop: ModelProperty): string;
   createSourceFile(name: string): SourceFile;
   createScope(path: string, file: SourceFile): Scope;
   createDeclaration(type: Type, name: string, code: string): Declaration;
   createLiteral(type: Type, code: string): Literal;
   addTypeEmitter(emitter: TypeEmitter): void;
-  emit(type: Type): void;
   writeOutput(): Promise<void>;
   pushScope(scope: Scope): void;
   popScope(): void;
@@ -54,7 +57,7 @@ export interface EmittedSourceFile {
   path: string;
 }
 
-export type EmitEntity = Declaration | Literal;
+export type EmitEntity = Declaration | Literal | RawCode;
 
 export type Declaration = {
   kind: "declaration",
@@ -70,6 +73,13 @@ export type Literal = {
   type: Type;
 }
 
+export type RawCode = {
+  kind: "code",
+  code: string;
+}
+
+export type EmitEntityOrString = EmitEntity | string;
+
 export interface AssetTag {
   language: AssetTagFactory;
   create(key: string): AssetTagFactory;
@@ -81,33 +91,23 @@ export type AssetTagFactory = {
   (value: string): AssetTagInstance;
 };
 
-export type CustomListeners = {
-  sourceFile: [
-    [sourceFile: SourceFile, emitter: AssetEmitter],
-    EmittedSourceFile
-  ];
-  reference: [
-    [targetDeclaration: Declaration, sourceScope: Scope, emitter: AssetEmitter],
-    string
-  ];
-  declarationName: [
-    [declarationType: CadlDeclaration], string
-  ]
-};
-
 export type CadlDeclaration = Model | Interface | Union | Operation | Enum;
 
-export type TypeEmitter = {
-  [type in Type["kind"] | keyof CustomListeners]?: type extends Type["kind"]
-    ? {
-        (type: Type & { kind: type }, emitter: AssetEmitter):
-          | EmitEntity
-          | EmitEntity[];
-      }
-    : type extends keyof CustomListeners
-    ? { (...args: CustomListeners[type][0]): CustomListeners[type][1] }
-    : never;
-};
+export interface TypeEmitter {
+  Model: {
+    scalar(model: Model, scalarName: string): EmitEntityOrString;
+    literal(model: Model): EmitEntityOrString;
+    declaration(model: Model, name: string): EmitEntityOrString;
+    properties(model: Model, properties: Model["properties"]): string; // hmm
+  };
+  ModelProperty: {
+    literal(property: ModelProperty): EmitEntityOrString;
+    reference(property: ModelProperty): string;
+  }
+  sourceFile(sourceFile: SourceFile, emitter: AssetEmitter): EmittedSourceFile;
+  reference(targetDeclaration: Declaration, sourceScope: Scope, emitter: AssetEmitter): string;
+  declarationName?(declarationType: CadlDeclaration): string;
+}
 
 export function createEmitterContext(program: Program): EmitContext {
   return {
@@ -134,7 +134,6 @@ export function createEmitterContext(program: Program): EmitContext {
           if (!Array.isArray(scope)) {
             scope = [scope]
           }
-          console.log("Setting scope to ", scope);
           const oldScope = scopeStack;
           scopeStack = scope;
           return oldScope;
@@ -150,7 +149,6 @@ export function createEmitterContext(program: Program): EmitContext {
           if (!scope) {
             throw new Error("There is no current scope for this declaration, ensure you have called pushScope().")
           }
-          console.log("Creating decl for " + name + " in scope", scope);
           return {
             kind: 'declaration',
             scope,
@@ -187,18 +185,27 @@ export function createEmitterContext(program: Program): EmitContext {
           return sourceFile;
         },
 
-        getTypeReference(target) {
+        emitTypeReference(target) {
+          const emitter = getTypeEmitter();
+
+          if (target.kind === "ModelProperty") {
+            return emitter.ModelProperty.reference(target);
+          }
+
           let entity = typeToEmitEntity.get(target);
           if (!entity) {
-            this.emit(target);
+            this.emitType(target);
             entity = typeToEmitEntity.get(target)!;
+          }
+
+          if (entity.kind === "code") {
+            return entity.code;
           }
 
           if (entity.kind === "literal") {
             return entity.code;
           }
 
-          const emitter = getTypeEmitter();
           const scope = currentScope();
           if (!scope) {
             throw new Error("Can't generate a type reference without a current scope, ensure you have called pushScope")
@@ -208,7 +215,7 @@ export function createEmitterContext(program: Program): EmitContext {
             : entity.name;
         },
 
-        getDeclarationName(type) {
+        emitDeclarationName(type) {
           const emitter = getTypeEmitter();
           return emitter.declarationName!(type);
         },
@@ -229,14 +236,37 @@ export function createEmitterContext(program: Program): EmitContext {
           typeEmitter = emitter;
         },
 
-        emit(type) {
-          if (typeToEmitEntity.has(type)) return;
+        emitType(type) {
+          const seenEmitEntity = typeToEmitEntity.get(type);
+
+          if (seenEmitEntity) return seenEmitEntity.code;
           const emitter = getTypeEmitter();
           switch (type.kind) {
             case "Model":
-              emitter.Model && addDecls(type, emitter.Model(type, this));
+              const intrinsicName = getIntrinsicModelName(program, type);
+              if (intrinsicName) {
+                return addDecls(type, stringToEntity(emitter.Model.scalar(type, intrinsicName)));
+              }
+
+              if (type.name === "" || type.name === "Array") {
+                return addDecls(type, stringToEntity(emitter.Model.literal(type)))
+              }
+
+              const declName = emitter.declarationName!(type);
+
+              return addDecls(type, stringToEntity(emitter.Model.declaration(type, declName)));
+            default:
+              return "";
           }
         },
+
+        emitModelProperties(model, properties) {
+          return getTypeEmitter().Model.properties(model, properties);
+        },
+
+        emitModelProperty(property) {
+          return addDecls(property, stringToEntity(getTypeEmitter().ModelProperty.literal(property)))
+        }
       };
 
       function getTypeEmitter(): TypeEmitter {
@@ -244,19 +274,22 @@ export function createEmitterContext(program: Program): EmitContext {
         return typeEmitter;
       }
 
-      function addDecls(type: Type, decls: EmitEntity | EmitEntity[]) {
-        // todo: handle multiple return ?
-        if (!Array.isArray(decls)) {
-          typeToEmitEntity.set(type, decls);
-          decls = [decls];
-        }
-
-        for (const decl of decls) {
-          if (decl.kind !== "declaration") continue;
+      function addDecls(type: Type, decl: EmitEntity) {
+        typeToEmitEntity.set(type, decl);
+        if (decl.kind === "declaration") {
           decl.scope.declarations.push(decl);
           const file = decl.scope.sourceFile;
           file.declarations.push(decl);
         }
+
+        return decl.code;
+      }
+
+      function stringToEntity(entity: EmitEntityOrString): EmitEntity {
+        if (typeof entity === "string") {
+          return { kind: "code", code: entity }
+        }
+        return entity;
       }
 
       function currentScope() {

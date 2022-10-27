@@ -44,7 +44,7 @@ export function createTSInterfaceEmitter(program: Program, context: EmitContext)
       for (const prop of m.properties.values()) {
         const name = prop.name === "_" ? "statusCode" : prop.name;
         props.push(
-          `${name}${prop.optional ? "?" : ""}: ${emitter.getTypeReference(prop.type, globalScope)}`
+          `${name}${prop.optional ? "?" : ""}: ${emitter.emitTypeReference(prop.type, globalScope)}`
         );
       }
   
