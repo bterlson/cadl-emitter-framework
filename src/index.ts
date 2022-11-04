@@ -23,7 +23,7 @@ export function createTSInterfaceEmitter(program: Program, context: EmitContext)
   const emitter: AssetEmitter = context.createAssetEmitter(context.AssetTag.language("typescript"));
   const outputFile = emitter.createSourceFile("data-store.ts");
   const globalScope = outputFile.globalScope;
-  emitter.addTypeEmitter({
+  emitter.setTypeEmitter({
     Model(m) {
       const intrinsicName = getIntrinsicModelName(program, m);
       if (intrinsicName) {

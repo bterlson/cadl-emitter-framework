@@ -1,144 +1,132 @@
-import { AssetEmitter, createEmitterContext, EmittedSourceFile, Scope, TypeEmitter } from "../src/framework.js";
+import { AssetEmitter, ContextState, createEmitterContext, Declaration, EmitContext, EmitEntity, EmittedSourceFile, Scope, SourceFile, SourceFileScope, TypeEmitter } from "../src/framework.js";
 import { createTSInterfaceEmitter } from "../src/index.js";
+import { TypeScriptInterfaceEmitter } from "../src/TypescriptEmitter.js";
 import test from "ava";
 import {emitCadlFile, getHostForCadlFile} from "./host.js";
-import { getIntrinsicModelName, Model, navigateProgram, getDoc } from "@cadl-lang/compiler";
+import { getIntrinsicModelName, Model, navigateProgram, getDoc, DecoratorContext, Type, ModelProperty, Namespace } from "@cadl-lang/compiler";
 import prettier from "prettier";
 
-const intrinsicNameToTSType = new Map<string, string>([
-  ["string", "string"],
-  ["int32", "number"],
-  ["int16", "number"],
-  ["float16", "number"],
-  ["float32", "number"],
-  ["int64", "bigint"],
-  ["boolean", "boolean"],
-]);
+const testCode = `
+model Basic { x: string }
+model RefsOtherModel { x: Basic }
+model HasNestedLiteral { x: { y: string } }
+model HasArrayProperty { x: string[], y: Basic[] }
+model IsArray is Array<string>;
+model Derived extends Basic { }
 
-function isArray(m: Model) {
-  return m.name === "Array";
+@doc("Has a doc")
+model HasDoc { @doc("an x property") x: string }
+
+model Template<T> { prop: T }
+model HasTemplates { x: Template<Basic> }
+model IsTemplate is Template<Basic>;
+model HasRef {
+  x: Basic.x;
+  y: RefsOtherModel.x;
 }
+`;
+test.skip('emits models to a single file by default', async (t) => {
+  const host = await getHostForCadlFile(testCode);
+  const program = host.program;
+  const context = createEmitterContext(host.program);
+  const emitter = context.createAssetEmitter(
+    TypeScriptInterfaceEmitter,
+    context.AssetTag.language("typescript")
+  );
+  const outputFile = emitter.createSourceFile("output.ts");
+  emitter.setScope(outputFile.globalScope);
 
-test('emits models to a single file', async (t) => {
-  const host = await getHostForCadlFile(`
-    model Basic { x: string }
-    model RefsOtherModel { x: Basic }
-    model HasNestedLiteral { x: { y: string } }
-    model HasArrayProperty { x: string[], y: Basic[] }
-    model IsArray is Array<string>;
-    model Derived extends Basic { }
-
-    @doc("Has a doc")
-    model HasDoc { @doc("an x property") x: string }
-
-    model Template<T> { prop: T }
-    model HasTemplates { x: Template<Basic> }
-    model IsTemplate is Template<Basic>;
-    model HasRef {
-      x: Basic.x;
-      y: RefsOtherModel.x;
+  navigateProgram(program, {
+    model(m) {
+      if (m.namespace?.name === "Cadl") { return }
+      emitter.emitType(m)
     }
-  `);
+  });
+
+  await emitter.writeOutput();
+
+  console.log(host.fs.get("Z:/test/output.ts"));
+});
+
+test.skip("emits to multiple files", async () => {
+  const host = await getHostForCadlFile(testCode);
+  const program = host.program;
+  const context = createEmitterContext(host.program);
+  
+  class ClassPerFileEmitter extends TypeScriptInterfaceEmitter {
+    modelDeclaration(model: Model, name: string): EmitEntity {
+      const outputFile = this.emitter.createSourceFile(`${name}.ts`);
+      this.emitter.setScope(outputFile.globalScope);
+
+      return super.modelDeclaration(model, name);
+    }
+  }
+
+  const emitter = context.createAssetEmitter(ClassPerFileEmitter, context.AssetTag.language("typescript"));
+
+  navigateProgram(program, {
+    model(m) {
+      if (m.namespace?.name === "Cadl") { return }
+      emitter.emitType(m)
+    }
+  });
+
+  await emitter.writeOutput();
+
+  console.log(host.fs);
+});
+
+test.skip("emits to namespaces", async () => {
+  const host = await getHostForCadlFile(testCode);
   const program = host.program;
   const context = createEmitterContext(host.program);
 
-  // start your code
-  // if another emitter emits the same type with the same tag, it will not be emitted again.
-  // if another emitter requests a reference to a type with the same tag, it will get a reference
-  // to the previously emitted type
-  const emitter = context.createAssetEmitter(context.AssetTag.language("typescript"));
-  const outputFile = emitter.createSourceFile("output.ts");
-  emitter.pushScope(outputFile.globalScope);
 
-  emitter.addTypeEmitter({
-    Model: {
-      scalar(m, name) {
-        if (!intrinsicNameToTSType.has(name)) {
-          throw new Error("Unknown scalar type " + name);
-        }
-        
-        const code = intrinsicNameToTSType.get(name)!;
-        return emitter.createLiteral(m, code);
-      },
-
-      literal(m) {
-        if (isArray(m)) {
-          return emitter.createLiteral(m, `${emitter.emitTypeReference(m.indexer!.value!)}[]`);
-        }
-
-        return emitter.createLiteral(m, `{ ${emitter.emitModelProperties(m, m.properties) }}`);
-      },
-
-      declaration(m, name) {
-        let extendsClause = "";
-        if (m.indexer && m.indexer.key!.name === "integer") {
-          extendsClause = `extends Array<${emitter.emitTypeReference(m.indexer!.value!)}>`
-        } else if (m.baseModel) {
-          extendsClause = `extends ${emitter.emitTypeReference(m.baseModel)}`
-        }
-  
-        let comment = getDoc(program, m);
-        let code = '';
-  
-        if (comment) {
-          code += `
-            /**
-             * ${comment}
-             */
-          `
-        }
-        code += `interface ${name} ${extendsClause} {
-          ${emitter.emitModelProperties(m, m.properties)}
-        }`;
-  
-        return emitter.createDeclaration(m, name, code);
-      },
-
-      properties(m, properties) {
-        return Array.from(properties.values()).map(p => emitter.emitModelProperty(p)).join(",");
-      }
-    },
-    ModelProperty: {
-      literal(prop) {
-        const name = prop.name === "_" ? "statusCode" : prop.name;
-        const doc = getDoc(program, prop);
-        let docString = '';
-  
-        if (doc) {
-          docString = `
-          /**
-           * ${doc}
-           */
-          `
-        }
-        
-        return emitter.createLiteral(prop, 
-          `${docString}${name}${prop.optional ? "?" : ""}: ${
-            emitter.emitTypeReference(prop.type)
-          }`
-        );
-      },
-      reference(prop) {
-        return emitter.emitTypeReference(prop.type);
-      }
-    },
-    sourceFile(s) {
-      const sourceFile: EmittedSourceFile = {
-        path: s.path,
-        contents: ''
+  class NamespacedEmitter extends TypeScriptInterfaceEmitter {
+    private nsByName: Map<string, Scope> = new Map();
+    
+    modelDeclaration(model: Model, name: string): EmitEntity {
+      const nsName = name.slice(0, 1);
+      let nsScope = this.nsByName.get(nsName);
+      if (!nsScope) {
+        nsScope = this.emitter.createScope({},nsName, this.emitter.getContext().scope);
+        this.nsByName.set(nsName, nsScope);
       }
 
-      for (const decl of s.declarations) {
-        sourceFile.contents += decl.code + "\n";
-      }
-      sourceFile.contents = prettier.format(sourceFile.contents, { parser: "typescript" })
-      return sourceFile;
-    },
+      this.emitter.setScope(nsScope);
 
-    reference(decl, scope) {
-      return decl.name;
+      return super.modelDeclaration(model, name);
     }
-  })
+
+    sourceFile(sourceFile: SourceFile): EmittedSourceFile {
+      const emittedSourceFile = super.sourceFile(sourceFile);
+      emittedSourceFile.contents += emitNamespaces(sourceFile.globalScope);
+      emittedSourceFile.contents = prettier.format(emittedSourceFile.contents, { parser: "typescript" })
+      return emittedSourceFile;
+
+      function emitNamespaces(scope: Scope) {
+        let res = '';
+        for (const childScope of scope.childScopes) {
+          res += emitNamespace(childScope);
+        }
+        return res;
+      }
+      function emitNamespace(scope: Scope) {
+        let ns = `namespace ${scope.name} {\n`
+        ns += emitNamespaces(scope);
+        for (const decl of scope.declarations) {
+          ns += decl.code + "\n";
+        }
+        ns += `}\n`
+
+        return ns;
+      }
+    }
+  }
+
+  const emitter = context.createAssetEmitter(NamespacedEmitter, context.AssetTag.language("typescript"));
+  const outputFile = emitter.createSourceFile("output.ts");
+  emitter.setScope(outputFile.globalScope);
 
   navigateProgram(program, {
     model(m) {
@@ -153,147 +141,143 @@ test('emits models to a single file', async (t) => {
 });
 
 
-test.only('emits models to one model per file', async (t) => {
-  const host = await getHostForCadlFile(`
-    model Basic { x: string }
-    model RefsOtherModel { x: Basic }
-    model HasNestedLiteral { x: { y: string } }
-    model HasArrayProperty { x: string[], y: Basic[] }
-    model IsArray is Array<string>;
-    model Derived extends Basic { }
+test("context applies to current emit frame", async (t) => {
+  t.plan(2);
 
-    @doc("Has a doc")
-    model HasDoc { @doc("an x property") x: string }
-
-    model Template<T> { prop: T }
-    model HasTemplates { x: Template<Basic> }
-    model IsTemplate is Template<Basic>;
-    model HasRef {
-      x: Basic.x;
-      y: RefsOtherModel.x;
-    }
+  const context = await createEmitContext(`
+    model A { }
+    model B { }
   `);
-  const program = host.program;
-  const context = createEmitterContext(host.program);
-
-  // start your code
-  // if another emitter emits the same type with the same tag, it will not be emitted again.
-  // if another emitter requests a reference to a type with the same tag, it will get a reference
-  // to the previously emitted type
-  const emitter = context.createAssetEmitter(context.AssetTag.language("typescript"));
-
-  emitter.addTypeEmitter({
-    Model: {
-      scalar(m, name) {
-        if (!intrinsicNameToTSType.has(name)) {
-          throw new Error("Unknown scalar type " + name);
-        }
-        
-        const code = intrinsicNameToTSType.get(name)!;
-        return emitter.createLiteral(m, code);
-      },
-
-      literal(m) {
-        if (isArray(m)) {
-          return emitter.createLiteral(m, `${emitter.emitTypeReference(m.indexer!.value!)}[]`);
-        }
-
-        return emitter.createLiteral(m, `{ ${emitter.emitModelProperties(m, m.properties) }}`);
-      },
-
-      declaration(m, name) {
-        // change 1 - create an output file per declaration
-        const outputFile = emitter.createSourceFile(`${name}.ts`);
-        const oldScope = emitter.setScope(outputFile.globalScope);
-      
-        let extendsClause = "";
-        if (m.indexer && m.indexer.key!.name === "integer") {
-          extendsClause = `extends Array<${emitter.emitTypeReference(m.indexer!.value!)}>`
-        } else if (m.baseModel) {
-          extendsClause = `extends ${emitter.emitTypeReference(m.baseModel)}`
-        }
-  
-        let comment = getDoc(program, m);
-        let code = '';
-  
-        if (comment) {
-          code += `
-            /**
-             * ${comment}
-             */
-          `
-        }
-        code += `export interface ${name} ${extendsClause} {
-          ${emitter.emitModelProperties(m, m.properties)}
-        }`;
-        const decl = emitter.createDeclaration(m, name, code);
-
-        // change 2 - scope management
-        emitter.restoreScope(oldScope);
-        return decl;
-      },
-
-      properties(m, properties) {
-        return Array.from(properties.values()).map(p => emitter.emitModelProperty(p)).join(",");
-      }
-    },
-    ModelProperty: {
-      literal(prop) {
-        const name = prop.name === "_" ? "statusCode" : prop.name;
-        const doc = getDoc(program, prop);
-        let docString = '';
-  
-        if (doc) {
-          docString = `
-          /**
-           * ${doc}
-           */
-          `
-        }
-        
-        return emitter.createLiteral(prop, 
-          `${docString}${name}${prop.optional ? "?" : ""}: ${
-            emitter.emitTypeReference(prop.type)
-          }`
-        );
-      },
-      reference(prop) {
-        return emitter.emitTypeReference(prop.type);
-      }
-    },
-    sourceFile(s) {
-      const sourceFile: EmittedSourceFile = {
-        path: s.path,
-        contents: ''
+  let scope: Scope | null = null;
+  class TestEmitter extends TypeEmitter {
+    modelDeclarationContext(model: Model, name: string): ContextState {
+      if (name === "A") {
+        scope = this.emitter.createScope({}, "A");
+        return { lexicalContext: {scope }};
       }
 
-      for (const [importPath, typeNames] of s.imports) {
-        sourceFile.contents += `import {${typeNames.join(",")}} from "${importPath}";\n`;
-      }
-
-      for (const decl of s.declarations) {
-        sourceFile.contents += decl.code + "\n";
-      }
-      sourceFile.contents = prettier.format(sourceFile.contents, { parser: "typescript" })
-      return sourceFile;
-    },
-
-    reference(decl, scope) {
-      // change 3 - import the file the type is defined in
-      // todo: handle same-file refs
-      scope.sourceFile.imports.set(`./${decl.scope.sourceFile.path.replace(".js", ".ts")}`, [decl.name]);
-      return decl.name;
+      return this.emitter.getContext();
     }
-  })
 
-  navigateProgram(program, {
+    modelDeclaration(model: Model, name: string): EmitEntity {
+      if (name === "A") {
+        t.is(this.emitter.getContext().lexicalContext?.scope, scope, `scope for A`);
+      } else {
+        t.is(this.emitter.getContext().lexicalContext?.scope, undefined, `scope for B`);
+      }
+      
+
+      return this.emitter.result.none();
+    }
+  }
+
+  emitModels(context, TestEmitter);
+});
+
+test("context is preserved for items in the same lexical context", async (t) => {
+  t.plan(2);
+
+  const context = await createEmitContext(`
+    model A { prop: string }
+  `);
+
+  let scope: Scope | null = null;
+  
+  class TestEmitter extends TypeEmitter {
+    modelDeclarationContext(model: Model, name: string): ContextState {
+      scope = this.emitter.createScope({}, "A");
+      return {
+        lexicalContext: {
+          scope
+        }
+      }
+    }
+
+    modelDeclaration(model: Model, name: string): EmitEntity {
+      t.is(this.emitter.getContext().lexicalContext?.scope, scope, `scope for ${model.name}`);
+      return super.modelDeclaration(model, name);
+    }
+
+    modelPropertyLiteral(property: ModelProperty): EmitEntity {
+      t.is(this.emitter.getContext().lexicalContext?.scope, scope, `scope for model property`);
+      return this.emitter.result.none();
+    }
+  }
+
+  emitModels(context, TestEmitter);
+});
+
+test("namespace context is preserved for models in that namespace", async (t) => {
+  t.plan(2);
+  const context = await createEmitContext(`
+    model Bar { prop: A.Foo };
+    namespace A {
+      model Foo { prop: string };
+    }
+  `)
+
+  class TestEmitter extends TypeEmitter {
+    namespaceContext(namespace: Namespace): ContextState {
+      return {
+        lexicalContext: {
+          inANamespace: namespace.name === "A"
+        }
+      }
+    }
+
+    modelDeclaration(model: Model, name: string): EmitEntity {
+      const context = this.emitter.getContext();
+      if (name === "Foo") {
+        t.assert(context.lexicalContext?.inANamespace);  
+      } else {
+        t.assert(!context.lexicalContext?.inANamespace);
+      }
+      
+      return super.modelDeclaration(model, name);
+    }
+  }
+  
+  emitModels(context, TestEmitter);
+});
+
+test.only("handles circular references", async (t) => {
+  const context = await createEmitContext(`
+    model Bar { prop: Foo };
+    model Foo { prop: Bar };
+  `);
+  let called = 0;
+  class TestEmitter extends TypeEmitter {
+    modelDeclaration(model: Model, name: string): EmitEntity {
+      called++;
+      return super.modelDeclaration(model, name);
+    }
+  }
+  emitModels(context, TestEmitter);
+  t.is(called, 2);
+});
+
+async function createEmitContext(code: string) {
+  const host = await getHostForCadlFile(code);
+  return createEmitterContext(host.program);
+}
+
+async function emitModels(context: EmitContext, typeEmitter: typeof TypeEmitter) {
+  const emitter = context.createAssetEmitter(typeEmitter, {});
+  navigateProgram(context.program, {
     model(m) {
       if (m.namespace?.name === "Cadl") { return }
+      console.log("Visiting model", m.name);
       emitter.emitType(m)
     }
   });
+}
 
-  await emitter.writeOutput();
-
-  console.log(host.fs);
-});
+async function emitNamespaces(context: EmitContext, typeEmitter: typeof TypeEmitter) {
+  const emitter = context.createAssetEmitter(typeEmitter, {});
+  navigateProgram(context.program, {
+    namespace(n) {
+      if (n.name === "Cadl") { return }
+      emitter.emitType(n);
+    }
+  });
+}

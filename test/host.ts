@@ -29,8 +29,12 @@ export async function createHost() {
   
 }
 
-export async function getHostForCadlFile(contents: string) {
+export async function getHostForCadlFile(contents: string, decorators?: Record<string, any>) {
   const host = await createTestHost();
+  if (decorators) {
+    await host.addJsFile("dec.js", decorators);
+    contents = `import "./dec.js";\n` + contents;
+  }
   await host.addCadlFile("main.cadl", contents);
   await host.compile("main.cadl", {
     outputDir: "cadl-output",
