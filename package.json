@@ -2,31 +2,26 @@
   "name": "cadl-ts-interface-emitter",
   "dependencies": {
     "@cadl-lang/compiler": "latest",
-    "prettier": "^2.7.1"
+    "prettier": "^2.7.1",
+    "sinon": "^14.0.2"
   },
   "private": true,
   "main": "dist/src/index.js",
   "cadlMain": "dist/src/index.js",
   "devDependencies": {
     "@ava/typescript": "^3.0.1",
+    "@types/mocha": "^10.0.0",
     "@types/node": "^18.11.5",
+    "@types/sinon": "^10.0.13",
     "ava": "^5.0.1",
+    "mocha": "^10.1.0",
+    "mocha-junit-reporter": "^2.1.1",
+    "mocha-multi-reporters": "^1.5.1",
+    "source-map-support": "^0.5.21",
     "typescript": "^4.8.4"
   },
   "type": "module",
   "scripts": {
-    "test": "ava"
-  },
-  "ava": {
-    "typescript": {
-      "rewritePaths": {
-        "src/": "dist/src/",
-        "test/": "dist/test/"
-      },
-      "compile": false
-    },
-    "files": [
-      "test/**/*.spec.ts"
-    ]
+    "test": "mocha"
   }
 }
