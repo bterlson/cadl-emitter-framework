@@ -7,7 +7,7 @@ import {
   EmitContext,
   TypeEmitter,
 } from "../src/framework.js";
-import { SinonSpy, spy } from "sinon";
+import { SinonSpy, spy,  } from "sinon";
 import assert from "assert";
 
 export const lib: CadlTestLibrary = {
@@ -82,6 +82,10 @@ function emitterSpies(emitter: typeof TypeEmitter) {
   const methods = Object.getOwnPropertyNames(emitter.prototype);
   for (const key of methods) {
     if (key === "constructor") continue;
+    if ((emitter.prototype as any)[key].restore) {
+      // assume this whole thing is already spied.
+      return spies;
+    }
     if (typeof (emitter.prototype as any)[key] !== "function") continue;
     spies[key] = spy(emitter.prototype, key as any);
   }

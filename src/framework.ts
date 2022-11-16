@@ -3,320 +3,33 @@ import {
   Program,
   Model,
   getIntrinsicModelName,
-  Interface,
-  Union,
-  Operation,
-  Enum,
-  ModelProperty,
   Namespace,
-  namespace,
-  BooleanLiteral
+  isTemplateDeclaration,
 } from "@cadl-lang/compiler";
+import { CodeBuilder, Placeholder } from "./code-builder.js";
+import { CustomKeyMap } from "./custom-key-map.js";
+import { TypeEmitter } from "./type-emitter.js";
+import {
+  EmitContext,
+  AssetTagInstance,
+  AssetEmitter,
+  ContextState,
+  EmitEntity,
+  EmitterState,
+  Literal,
+  RawCode,
+  Scope,
+  SourceFileScope,
+  NamespaceScope,
+  AssetTagFactory,
+  CadlDeclaration,
+  Declaration,
+  SourceFile
+} from "./types.js";
 
 type EndingWith<Names, Name extends string> = Names extends `${infer _X}${Name}`
   ? Names
   : never;
-
-export interface EmitContext {
-  program: Program;
-  AssetTag: AssetTag;
-  createAssetEmitter(
-    TypeEmitterClass: typeof TypeEmitter,
-    ...tags: AssetTagInstance[]
-  ): AssetEmitter;
-}
-
-export interface AssetEmitter {
-  getContext(): Context;
-  getReferenceContext(): Context;
-  getProgram(): Program;
-  emitTypeReference(type: Type): EmitEntity;
-  emitDeclarationName(type: CadlDeclaration): string;
-  emitType(type: Type): EmitEntity;
-  emitProgram(options?: {
-    emitGlobalNamespace?: boolean;
-    emitCadlNamespace?: boolean;
-  }): void;
-  emitModelProperties(model: Model): EmitEntity;
-  emitModelProperty(prop: ModelProperty): EmitEntity;
-  createSourceFile(name: string): SourceFile;
-  createScope(sourceFile: SourceFile, name: string): SourceFileScope;
-  createScope(namespace: any, name: string, parentScope: Scope): NamespaceScope;
-  createScope(block: any, name: string, parentScope?: Scope | null): Scope;
-  result: {
-    declaration(name: string, code: string | CodeBuilder): Declaration;
-    literal(code: string | CodeBuilder): Literal;
-    rawCode(code: string | CodeBuilder): RawCode;
-    none(): NoEmit;
-  };
-  writeOutput(): Promise<void>;
-}
-
-export interface ScopeBase {
-  kind: string;
-  name: string;
-  parentScope: Scope | null;
-  childScopes: Scope[];
-  declarations: Declaration[];
-}
-
-export interface SourceFileScope extends ScopeBase {
-  kind: "sourceFile";
-  sourceFile: SourceFile;
-}
-
-export interface NamespaceScope extends ScopeBase {
-  kind: "namespace";
-  namespace: any;
-}
-
-export type Scope = SourceFileScope | NamespaceScope;
-
-export interface TypeReference {
-  expression: string;
-}
-
-export interface SourceFile {
-  path: string;
-  globalScope: Scope;
-  imports: Map<string, string[]>;
-}
-
-export interface EmittedSourceFile {
-  contents: string;
-  path: string;
-}
-
-export type EmitEntity =
-  | Declaration
-  | Literal
-  | RawCode
-  | NoEmit
-  | CircularEmit;
-
-export type Declaration = {
-  kind: "declaration";
-  scope: Scope;
-  name: string;
-  code: string | CodeBuilder;
-};
-
-export type Literal = {
-  kind: "literal";
-  code: string | CodeBuilder;
-};
-
-export type RawCode = {
-  kind: "code";
-  code: string | CodeBuilder;
-};
-
-export type NoEmit = {
-  kind: "none";
-  code: "";
-};
-
-export type CircularEmit = {
-  kind: "circular";
-  emitEntityKey: [string, Type, ContextState];
-};
-
-export interface AssetTag {
-  language: AssetTagFactory;
-  create(key: string): AssetTagFactory;
-}
-
-export interface AssetTagInstance {}
-
-export type AssetTagFactory = {
-  (value: string): AssetTagInstance;
-};
-
-export type CadlDeclaration = Model | Interface | Union | Operation | Enum;
-
-export interface ContextState {
-  lexicalContext?: Record<string, any>;
-  referenceContext?: Record<string, any>;
-}
-
-export type Context = Record<string, any>;
-
-export interface EmitterState {
-  lexicalTypeStack: Type[],
-  context: ContextState
-}
-
-export class TypeEmitter {
-  constructor(protected emitter: AssetEmitter) {}
-
-  programContext(program: Program) {
-    return this.emitter.getContext();
-  }
-
-  namespace(namespace: Namespace): EmitEntity {
-    for (const ns of namespace.namespaces.values()) {
-      this.emitter.emitType(ns);
-    }
-
-    for (const model of namespace.models.values()) {
-      this.emitter.emitType(model);
-    }
-
-    for (const operation of namespace.operations.values()) {
-      this.emitter.emitType(operation);
-    }
-
-    for (const enumeration of namespace.enums.values()) {
-      this.emitter.emitType(enumeration);
-    }
-
-    for (const union of namespace.unions.values()) {
-      this.emitter.emitType(union);
-    }
-
-    for (const iface of namespace.interfaces.values()) {
-      this.emitter.emitType(iface);
-    }
-
-    return this.emitter.result.none();
-  }
-
-  namespaceContext(namespace: Namespace): Context {
-    return this.emitter.getContext();
-  }
-  namespaceReferenceContext(namespace: Namespace): 
-
-  modelScalar(model: Model, scalarName: string): EmitEntity {
-    return this.emitter.result.none();
-  }
-
-  modelScalarContext(model: Model, scalarName: string): ContextState {
-    return this.emitter.getContext();
-  }
-
-  modelLiteral(model: Model): EmitEntity {
-    if (model.baseModel) {
-      this.emitter.emitType(model.baseModel);
-    }
-
-    this.emitter.emitModelProperties(model);
-    return this.emitter.result.none();
-  }
-
-  modelLiteralContext(model: Model): ContextState {
-    return this.emitter.getContext();
-  }
-
-  modelDeclaration(model: Model, name: string): EmitEntity {
-    if (model.baseModel) {
-      this.emitter.emitType(model.baseModel);
-    }
-    this.emitter.emitModelProperties(model);
-    return this.emitter.result.none();
-  }
-
-  modelDeclarationContext(model: Model, name: string): ContextState {
-    return this.emitter.getContext();
-  }
-
-  modelInstantiation(model: Model, name: string): EmitEntity {
-    if (model.baseModel) {
-      this.emitter.emitType(model.baseModel);
-    }
-    this.emitter.emitModelProperties(model);
-    return this.emitter.result.none();
-  }
-
-  modelInstantiationContext(model: Model, name: string): ContextState {
-    return this.emitter.getContext();
-  }
-
-  modelProperties(model: Model): EmitEntity {
-    for (const prop of model.properties.values()) {
-      this.emitter.emitModelProperty(prop);
-    }
-
-    return this.emitter.result.none();
-  }
-
-  modelPropertyLiteral(property: ModelProperty): EmitEntity {
-    this.emitter.emitTypeReference(property.type);
-    return this.emitter.result.none();
-  }
-
-  modelPropertyLiteralContext(property: ModelProperty): ContextState {
-    return this.emitter.getContext();
-  }
-
-  modelPropertyReference(property: ModelProperty): EmitEntity {
-    return this.emitter.result.rawCode(
-      code`${this.emitter.emitTypeReference(property.type)}`
-    );
-  }
-
-  booleanLiteralContext(boolean: BooleanLiteral): ContextState {
-    return this.emitter.getContext();
-  }
-  booleanLiteral(boolean: BooleanLiteral): EmitEntity {
-    return this.emitter.result.none();
-  }
-
-  sourceFile(sourceFile: SourceFile): EmittedSourceFile {
-    const emittedSourceFile: EmittedSourceFile = {
-      path: sourceFile.path,
-      contents: "",
-    };
-
-    for (const decl of sourceFile.globalScope.declarations) {
-      emittedSourceFile.contents += decl.code + "\n";
-    }
-
-    return emittedSourceFile;
-  }
-
-  reference(
-    targetDeclaration: Declaration,
-    pathUp: Scope[],
-    pathDown: Scope[],
-    commonScope: Scope | null
-  ): EmitEntity {
-    const basePath = pathDown.map((s) => s.name).join(".");
-    return basePath
-      ? this.emitter.result.rawCode(basePath + "." + targetDeclaration.name)
-      : this.emitter.result.rawCode(targetDeclaration.name);
-  }
-
-  declarationName(declarationType: CadlDeclaration): string {
-    if (!declarationType.name) {
-      throw new Error("Can't emit a declaration that doesn't have a name");
-    }
-
-    if (declarationType.kind === "Enum") {
-      return declarationType.name;
-    }
-
-    if (
-      declarationType.templateArguments === undefined ||
-      declarationType.templateArguments.length === 0
-    ) {
-      return declarationType.name;
-    }
-
-    // todo: this probably needs to be a lot more robust
-    const parameterNames = declarationType.templateArguments.map((t) => {
-      switch (t.kind) {
-        case "Model":
-          return this.emitter.emitDeclarationName(t);
-        default:
-          throw new Error(
-            "Can't get a name for non-model type used to instantiate a model template"
-          );
-      }
-    });
-
-    return declarationType.name + parameterNames.join("");
-  }
-}
 
 export function createEmitterContext(program: Program): EmitContext {
   return {
@@ -334,19 +47,21 @@ export function createEmitterContext(program: Program): EmitContext {
       const sourceFiles: SourceFile[] = [];
       const typeId = CustomKeyMap.objectKeyer();
       const contextId = CustomKeyMap.objectKeyer();
-      const typeToEmitEntity = new CustomKeyMap<[string, Type, ContextState], EmitEntity>(
-        ([method, type, context]) => {
-          return `${method}-${typeId.getKey(type)}-${contextId.getKey(context)}`;
-        }
-      );
-      const waitingCircularRefs = new CustomKeyMap<[string, Type, ContextState], {
-        state: EmitterState,
-        cb: ((entity: EmitEntity) => EmitEntity)
-      }[]>(
-        ([method, type]) => {
-          return `${method}-${typeId.getKey(type)}`;
-        }
-      )
+      const typeToEmitEntity = new CustomKeyMap<
+        [string, Type, ContextState],
+        EmitEntity
+      >(([method, type, context]) => {
+        return `${method}-${typeId.getKey(type)}-${contextId.getKey(context)}`;
+      });
+      const waitingCircularRefs = new CustomKeyMap<
+        [string, Type, ContextState],
+        {
+          state: EmitterState;
+          cb: (entity: EmitEntity) => EmitEntity;
+        }[]
+      >(([method, type]) => {
+        return `${method}-${typeId.getKey(type)}`;
+      });
       const knownContexts = new CustomKeyMap<
         [Type, ContextState],
         ContextState
@@ -354,13 +69,20 @@ export function createEmitterContext(program: Program): EmitContext {
         return `${typeId.getKey(type)}-${contextId.getKey(context)}`;
       });
       let lexicalTypeStack: Type[] = [];
-      let context: ContextState = {};
+      let context: ContextState = {
+        lexicalContext: {},
+        referenceContext: {},
+      };
       let programContext: ContextState | null = null;
       let incomingReferenceContext: Record<string, string> | null = null;
+      const interner = createInterner();
 
       const assetEmitter: AssetEmitter = {
         getContext() {
-          return context;
+          return {
+            ...context.lexicalContext,
+            ...context.referenceContext,
+          };
         },
         getProgram() {
           return program;
@@ -370,7 +92,7 @@ export function createEmitterContext(program: Program): EmitContext {
             const scope = currentScope();
             if (!scope) {
               throw new Error(
-                "There is no current scope for this declaration, ensure you have called pushScope()."
+                "There is no current scope for this declaration, ensure the current context has a scope."
               );
             }
 
@@ -382,9 +104,9 @@ export function createEmitterContext(program: Program): EmitContext {
             };
 
             if (code instanceof CodeBuilder) {
-              code.onComplete(value => entity.code = value);
+              code.onComplete((value) => (entity.code = value));
             }
-            return entity
+            return entity;
           },
           literal(code) {
             const entity: Literal = {
@@ -393,7 +115,7 @@ export function createEmitterContext(program: Program): EmitContext {
             };
 
             if (code instanceof CodeBuilder) {
-              code.onComplete(value => entity.code = value);
+              code.onComplete((value) => (entity.code = value));
             }
             return entity;
           },
@@ -404,7 +126,7 @@ export function createEmitterContext(program: Program): EmitContext {
             };
 
             if (code instanceof CodeBuilder) {
-              code.onComplete(value => entity.code = value);
+              code.onComplete((value) => (entity.code = value));
             }
 
             return {
@@ -458,6 +180,9 @@ export function createEmitterContext(program: Program): EmitContext {
         },
 
         emitTypeReference(target): EmitEntity {
+          const _this = this;
+
+
           if (target.kind === "ModelProperty") {
             return invokeTypeEmitter("modelPropertyReference", target);
           }
@@ -478,10 +203,10 @@ export function createEmitterContext(program: Program): EmitContext {
             waiting.push({
               state: {
                 lexicalTypeStack,
-                context
+                context,
               },
-              cb: invokeReference
-            })
+              cb: invokeReference,
+            });
             const builder = new CodeBuilder();
             placeholder = new Placeholder();
             builder.push(placeholder);
@@ -490,19 +215,18 @@ export function createEmitterContext(program: Program): EmitContext {
 
           return invokeReference(entity);
 
-          
-          function invokeReference(entity: EmitEntity) {
+          function invokeReference(entity: EmitEntity): EmitEntity {
             if (entity.kind !== "declaration") {
               return entity;
             }
-  
+
             const scope = currentScope();
             if (!scope) {
               throw new Error(
-                "Can't generate a type reference without a current scope, ensure you have called pushScope"
+                "Can't generate a type reference without a current scope, ensure the current context has a scope"
               );
             }
-  
+
             const targetScope = entity.scope;
             const targetChain = scopeChain(targetScope);
             const currentChain = scopeChain(scope);
@@ -514,22 +238,26 @@ export function createEmitterContext(program: Program): EmitContext {
             ) {
               diffStart++;
             }
-  
+
             const pathUp: Scope[] = currentChain.slice(diffStart);
             const pathDown: Scope[] = targetChain.slice(diffStart);
-            
-            const ref = typeEmitter.reference(
+
+            let ref = typeEmitter.reference(
               entity,
               pathUp,
               pathDown,
               targetChain[diffStart - 1] ?? null
             );
 
+            if (typeof ref === "string" || ref instanceof CodeBuilder) {
+              ref = _this.result.literal(ref);
+            }
+
             if (placeholder) {
               if (ref.kind === "circular") {
                 throw new Error("Circular resulted in circular?");
               }
-              
+
               if (typeof ref.code !== "string") {
                 // todo: maybe ok if this results in a code builder? But unlikely for references...
                 throw new Error("still circular?");
@@ -573,7 +301,13 @@ export function createEmitterContext(program: Program): EmitContext {
               break;
             case "modelDeclaration":
             case "modelInstantiation":
-              const declarationName = typeEmitter.declarationName!(
+            case "operationDeclaration":
+            case "interfaceDeclaration":
+            case "interfaceOperationDeclaration":
+            case "enumDeclaration":
+            case "unionDeclaration":
+            case "unionInstantiation":
+              const declarationName = typeEmitter.declarationName(
                 type as Model
               );
               args = [declarationName];
@@ -600,12 +334,15 @@ export function createEmitterContext(program: Program): EmitContext {
           }
 
           for (const model of namespace.models.values()) {
-            console.log("emitting model " + model.name + " from program")
-            this.emitType(model);
+            if (!isTemplateDeclaration(model)) {
+              this.emitType(model);
+            }
           }
 
           for (const operation of namespace.operations.values()) {
-            this.emitType(operation);
+            if (!isTemplateDeclaration(operation)) {
+              this.emitType(operation);
+            }
           }
 
           for (const enumeration of namespace.enums.values()) {
@@ -613,21 +350,67 @@ export function createEmitterContext(program: Program): EmitContext {
           }
 
           for (const union of namespace.unions.values()) {
-            this.emitType(union);
+            if (!isTemplateDeclaration(union)) {
+              this.emitType(union);
+            }
           }
 
           for (const iface of namespace.interfaces.values()) {
-            this.emitType(iface);
+            if (!isTemplateDeclaration(iface)) {
+              this.emitType(iface);
+            }
           }
         },
 
         emitModelProperties(model) {
-          return typeEmitter.modelProperties(model);
+          const entity = typeEmitter.modelProperties(model);
+          if (typeof entity === "string" || entity instanceof CodeBuilder) {
+            return this.result.literal(entity);
+          }
+
+          return entity;
         },
 
         emitModelProperty(property) {
           return invokeTypeEmitter("modelPropertyLiteral", property);
         },
+
+        emitOperationParameters(operation) {
+          return invokeTypeEmitter(
+            "operationParameters",
+            operation,
+            operation.parameters
+          );
+        },
+
+        emitOperationReturnType(operation) {
+          return invokeTypeEmitter(
+            "operationReturnType",
+            operation,
+            operation.returnType
+          );
+        },
+
+        emitInterfaceOperations(iface) {
+          return invokeTypeEmitter("interfaceDeclarationOperations", iface);
+        },
+
+        emitInterfaceOperation(operation) {
+          const name = typeEmitter.declarationName(operation);
+          return invokeTypeEmitter(
+            "interfaceOperationDeclaration",
+            operation,
+            name
+          );
+        },
+
+        emitEnumMembers(en) {
+          return invokeTypeEmitter("enumMembers", en);
+        },
+
+        emitUnionVariants(union) {
+          return invokeTypeEmitter("unionVariants", union);
+        }
       };
 
       const typeEmitter = new TypeEmitterClass(assetEmitter);
@@ -643,10 +426,10 @@ export function createEmitterContext(program: Program): EmitContext {
         >
       >(method: T, ...args: Parameters<TypeEmitter[T]>) {
         const type = args[0];
-  
         let entity: EmitEntity;
         let emitEntityKey: [string, Type, ContextState];
         let cached = false;
+
         withTypeContext(type, () => {
           emitEntityKey = [method, type, context];
           const seenEmitEntity = typeToEmitEntity.get(emitEntityKey);
@@ -657,8 +440,17 @@ export function createEmitterContext(program: Program): EmitContext {
             return;
           }
 
-          typeToEmitEntity.set(emitEntityKey, { kind: "circular", emitEntityKey });
+          typeToEmitEntity.set(emitEntityKey, {
+            kind: "circular",
+            emitEntityKey,
+          });
+          if (!typeEmitter[method]) {
+            throw new Error("Type emitter doesn't have method " + method);
+          }
           entity = (typeEmitter[method] as any)(...args);
+          if (typeof entity === "string" || entity instanceof CodeBuilder) {
+            entity = assetEmitter.result.literal(entity);
+          }
         });
 
         if (cached) {
@@ -669,11 +461,13 @@ export function createEmitterContext(program: Program): EmitContext {
         const waitingRefCbs = waitingCircularRefs.get(emitEntityKey!);
         if (waitingRefCbs) {
           for (const record of waitingRefCbs) {
-            withContext(record.state, () => { record.cb(entity); });
+            withContext(record.state, () => {
+              record.cb(entity);
+            });
           }
           waitingCircularRefs.set(emitEntityKey!, []);
         }
-        
+
         if (entity!.kind === "declaration") {
           entity!.scope.declarations.push(entity!);
         }
@@ -693,36 +487,67 @@ export function createEmitterContext(program: Program): EmitContext {
             ns = ns.namespace;
           }
         } else {
-          newTypeStack = [ ... lexicalTypeStack, type ];
+          newTypeStack = [...lexicalTypeStack, type];
         }
 
         lexicalTypeStack = newTypeStack;
 
         if (!programContext) {
-          programContext = typeEmitter.programContext(program);
+          programContext = interner.intern({
+            lexicalContext: typeEmitter.programContext(program),
+            referenceContext: {},
+          });
         }
 
         context = programContext;
 
         for (const contextChainEntry of lexicalTypeStack) {
+          if (contextChainEntry === type && incomingReferenceContext) {
+            context = interner.intern({
+              lexicalContext: context.lexicalContext,
+              referenceContext: interner.intern({
+                ...context.referenceContext,
+                ...incomingReferenceContext,
+              }),
+            });
+            incomingReferenceContext = null;
+          }
+
           const seenContext = knownContexts.get([contextChainEntry, context]);
           if (seenContext) {
             context = seenContext;
             continue;
           }
 
-          const key = typeEmitterKey(contextChainEntry) + "Context";
-          const newContext = (typeEmitter as any)[key](contextChainEntry);
-          knownContexts.set([contextChainEntry, context], newContext);
-          context = newContext;
-        }
+          const key = typeEmitterKey(contextChainEntry);
 
-        if (incomingReferenceContext) {
-          context = {
-            lexicalContext: context.lexicalContext,
-            referenceContext: { ... context.referenceContext, ... incomingReferenceContext }
-          };
-          incomingReferenceContext = null;
+          const lexicalKey = key + "Context";
+          const referenceKey =
+            typeEmitterKey(contextChainEntry) + "ReferenceContext";
+
+          if (!(typeEmitter as any)[lexicalKey]) {
+            throw new Error("Type emitter doesn't have key " + lexicalKey);
+          }
+          const newContext = (typeEmitter as any)[lexicalKey](
+            contextChainEntry
+          );
+          const newReferenceContext = keyHasReferenceContext(key)
+            ? (typeEmitter as any)[referenceKey](contextChainEntry)
+            : {};
+
+          const newContextState = interner.intern({
+            lexicalContext: interner.intern({
+              ...context.lexicalContext,
+              ...newContext,
+            }),
+            referenceContext: interner.intern({
+              ...context.referenceContext,
+              ...newReferenceContext,
+            }),
+          });
+
+          knownContexts.set([contextChainEntry, context], newContextState);
+          context = newContextState;
         }
       }
 
@@ -740,7 +565,7 @@ export function createEmitterContext(program: Program): EmitContext {
       function withContext(newContext: EmitterState, cb: () => void) {
         const oldContext = newContext.context;
         const oldTypeStack = newContext.lexicalTypeStack;
-        context = newContext.context
+        context = newContext.context;
         lexicalTypeStack = newContext.lexicalTypeStack;
 
         cb();
@@ -775,6 +600,37 @@ export function createEmitterContext(program: Program): EmitContext {
             return "modelPropertyLiteral";
           case "Boolean":
             return "booleanLiteral";
+          case "String":
+            return "stringLiteral";
+          case "Number":
+            return "numericLiteral";
+          case "Operation":
+            if (type.interface) {
+              return "interfaceOperationDeclaration";
+            } else {
+              return "operationDeclaration";
+            }
+          case "Interface":
+            return "interfaceDeclaration";
+          case "Enum":
+            return "enumDeclaration";
+          case "EnumMember":
+            return "enumMember";
+          case "Union":
+            if (!type.name) {
+              return "unionLiteral";
+            }
+
+            if (
+              type.templateArguments === undefined ||
+              type.templateArguments.length === 0
+            ) {
+              return "unionDeclaration";
+            }
+
+            return "unionInstantiation";
+          case "UnionVariant":
+            return "unionVariant";
           default:
             throw new Error("Unknown type: " + type.kind);
         }
@@ -796,171 +652,14 @@ export function createEmitterContext(program: Program): EmitContext {
   }
 }
 
-export function isArrayType(m: Model) {
-  return m.name === "Array";
-}
-
-export class Placeholder {
-  #listeners: ((value: string) => void)[] = [];
-  setValue(value: string) {
-    for (const listener of this.#listeners) {
-      listener(value);
-    }
-  }
-
-  onValue(cb: (value:string) => void) {
-    this.#listeners.push(cb);
-  }
-}
-
-export class CodeBuilder {
-  public segments: (string | Placeholder)[] = [];
-  #placeholders: Set<Placeholder> = new Set();
-  #listeners: ((value: string) => void)[] = [];
-
-  #notifyComplete() {
-    const value = this.segments.join("");
-    for (const listener of this.#listeners) {
-      listener(value);
-    }
-  }
-
-  #setPlaceholderValue(ph: Placeholder, value: string) {
-    for (const [i, segment] of this.segments.entries()) {
-      if (segment === ph) {
-        this.segments[i] = value;
-      }
-    }
-    this.#placeholders.delete(ph);
-    if (this.#placeholders.size === 0) {
-      this.#notifyComplete();
-    }
-  }
-
-  onComplete(cb: (value: string) => void) {
-    this.#listeners.push(cb);
-  }
-
-  pushLiteralSegment(segment: string) {
-    if (this.#shouldConcatLiteral()) {
-      this.segments[this.segments.length - 1] += segment;
-    } else {
-      this.segments.push(segment);
-    }
-  }
-
-  pushPlaceholder(ph: Placeholder) {
-    this.#placeholders.add(ph);
-
-    ph.onValue((value) => {
-      this.#setPlaceholderValue(ph, value);
-    });
-
-    this.segments.push(ph);
-  }
-
-  pushCodeBuilder(builder: CodeBuilder) {
-    for (const segment of builder.segments) {
-      this.push(segment);
-    }
-  }
-
-  push(segment: CodeBuilder | Placeholder | string) {
-    if (typeof segment === "string") {
-      this.pushLiteralSegment(segment);
-    } else if (segment instanceof CodeBuilder) {
-      this.pushCodeBuilder(segment);
-    } else {
-      this.pushPlaceholder(segment);
-    }
-  }
-
-  reduce() {
-    if (this.#placeholders.size === 0) {
-      return this.segments.join("");
-    }
-
-    return this;
-  }
-  
-  #shouldConcatLiteral() {
-    return (
-      this.segments.length > 0 &&
-      typeof this.segments[this.segments.length - 1] === "string"
-    );
-  }
-}
-
-export function code(
-  parts: TemplateStringsArray,
-  ...substitutions: (EmitEntity | CodeBuilder | string)[]
-): string | CodeBuilder {
-  const builder = new CodeBuilder();
-
-  for (const [i, literalPart] of parts.entries()) {
-    builder.push(literalPart);
-    if (i < substitutions.length) {
-      const sub = substitutions[i];
-      if (typeof sub === "string") {
-        builder.push(sub);
-      } else if (sub instanceof CodeBuilder) {
-        builder.pushCodeBuilder(sub);
-      } else if (sub.kind === "circular") {
-        throw new Error("Circular reference!");
-      } else {
-        builder.push(sub.code);
-      }
-    }
-  }
-
-  return builder.reduce();
-}
-
-export class CustomKeyMap<K extends readonly any[], V> {
-  #currentId = 0;
-  #idMap = new WeakMap<object, number>();
-  #items = new Map<string, V>();
-  #keyer;
-
-  constructor(keyer: (args: K) => string) {
-    this.#keyer = keyer;
-  }
-
-  get(items: K): V | undefined {
-    return this.#items.get(this.#keyer(items));
-  }
-
-  set(items: K, value: V): void {
-    const key = this.#keyer(items);
-    this.#items.set(key, value);
-  }
-
-  static objectKeyer() {
-    const knownKeys = new WeakMap<object, number>();
-    let count = 0;
-    return {
-      getKey(o: object) {
-        if (knownKeys.has(o)) {
-          return knownKeys.get(o);
-        }
-
-        let key = count;
-        count++;
-        knownKeys.set(o, key);
-        return key;
-      },
-    };
-  }
-}
-
 function isDeclaration(type: Type): type is CadlDeclaration | Namespace {
-  switch(type.kind) {
+  switch (type.kind) {
     case "Namespace":
     case "Interface":
     case "Enum":
     case "Operation":
       return true;
-    
+
     case "Model":
       return type.name ? type.name !== "" && type.name !== "Array" : false;
     case "Union":
@@ -968,4 +667,53 @@ function isDeclaration(type: Type): type is CadlDeclaration | Namespace {
     default:
       return false;
   }
+}
+
+// This is EXTREMELY non-optimal (O(n*m) where n = number of unique state objects and
+// m = the number of properties a state object contains). This will very quickly be a
+// bottleneck. That said, the common case is no state at all, and also this is essentially
+// implementing records and tuples, so could probably adopt those when they are released.
+function createInterner() {
+  const emptyObject = {};
+  const knownObjects: Set<Record<string, any>> = new Set();
+
+  return {
+    intern<T extends Record<string, any>>(object: T): T {
+      const keyLen = Object.keys(object).length;
+      if (keyLen === 0) return emptyObject as any;
+
+      for (const ko of knownObjects) {
+        const entries = Object.entries(ko);
+        if (entries.length !== keyLen) continue;
+
+        let found = true;
+        for (const [key, value] of entries) {
+          if (object[key] !== value) {
+            found = false;
+            break;
+          }
+        }
+
+        if (found) {
+          return ko as any;
+        }
+      }
+
+      knownObjects.add(object);
+      return object;
+    },
+  };
+}
+
+const noReferenceContext = new Set<string>([
+  "booleanLiteral",
+  "stringLiteral",
+  "numericLiteral",
+  "modelScalar",
+  "enumDeclaration",
+  "enumMember"
+]);
+
+function keyHasReferenceContext(key: keyof TypeEmitter): boolean {
+  return !noReferenceContext.has(key);
 }

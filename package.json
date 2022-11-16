@@ -1,6 +1,7 @@
 {
   "name": "cadl-ts-interface-emitter",
   "dependencies": {
+    "@bloomberg/record-tuple-polyfill": "^0.0.4",
     "@cadl-lang/compiler": "latest",
     "prettier": "^2.7.1",
     "sinon": "^14.0.2"
