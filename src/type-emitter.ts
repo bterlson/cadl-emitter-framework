@@ -16,6 +16,7 @@ import {
   isTemplateDeclaration,
   EnumMember,
   UnionVariant,
+  Tuple,
 } from "@cadl-lang/compiler";
 import { code, CodeBuilder } from "./code-builder.js";
 import { AssetEmitter, EmitEntityOrString, EmittedSourceFile, Scope, CadlDeclaration, Context, SourceFile, Declaration, EmitEntity } from "./types.js";
@@ -342,6 +343,31 @@ export class TypeEmitter {
   unionVariantReferenceContext(union: Union): Context {
     return {};
   }
+
+  tupleLiteral(tuple: Tuple): EmitEntityOrString {
+    this.emitter.emitTupleLiteralValues(tuple);
+    return this.emitter.result.none();
+  }
+
+  tupleLiteralContext(tuple: Tuple): Context {
+    return {};
+  }
+
+  tupleLiteralReferenceContext(tuple: Tuple): Context {
+    return {};
+  }
+
+  tupleLiteralValues(tuple: Tuple): EmitEntityOrString {
+    const builder = new CodeBuilder();
+    let i = 0;
+    for (const v of tuple.values) {
+      i++;
+      builder.push(code`${this.emitter.emitTypeReference(v)}${i < tuple.values.length ? ',' : ''}`);
+    }
+    return builder.reduce();
+  }
+
+
   sourceFile(sourceFile: SourceFile): EmittedSourceFile {
     const emittedSourceFile: EmittedSourceFile = {
       path: sourceFile.path,

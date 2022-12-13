@@ -1,4 +1,4 @@
-import { Program, Type, Model, ModelProperty, Operation, Union, Enum, Interface } from "@cadl-lang/compiler";
+import { Program, Type, Model, ModelProperty, Operation, Union, Enum, Interface, Tuple } from "@cadl-lang/compiler";
 import { CodeBuilder } from "./code-builder.js";
 import { TypeEmitter } from "./type-emitter.js";
 
@@ -29,13 +29,13 @@ export interface AssetEmitter {
   emitInterfaceOperation(operation: Operation): EmitEntity;
   emitEnumMembers(en: Enum): EmitEntity;
   emitUnionVariants(union: Union): EmitEntity;
+  emitTupleLiteralValues(tuple: Tuple): EmitEntity;
   createSourceFile(name: string): SourceFile;
   createScope(sourceFile: SourceFile, name: string): SourceFileScope;
   createScope(namespace: any, name: string, parentScope: Scope): NamespaceScope;
   createScope(block: any, name: string, parentScope?: Scope | null): Scope;
   result: {
     declaration(name: string, code: string | CodeBuilder): Declaration;
-    literal(code: string | CodeBuilder): Literal;
     rawCode(code: string | CodeBuilder): RawCode;
     none(): NoEmit;
   };

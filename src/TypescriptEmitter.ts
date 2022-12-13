@@ -12,6 +12,7 @@ import {
   EnumMember,
   Union,
   UnionVariant,
+  Tuple,
 } from "@cadl-lang/compiler";
 import prettier from "prettier";
 import {
@@ -62,17 +63,17 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     }
 
     const code = intrinsicNameToTSType.get(scalarName)!;
-    return this.emitter.result.literal(code);
+    return this.emitter.result.rawCode(code);
   }
 
   modelLiteral(model: Model): EmitEntityOrString {
     if (isArrayType(model)) {
-      return this.emitter.result.literal(
+      return this.emitter.result.rawCode(
         code`${this.emitter.emitTypeReference(model.indexer!.value!)}[]`
       );
     }
 
-    return this.emitter.result.literal(
+    return this.emitter.result.rawCode(
       code`{ ${this.emitter.emitModelProperties(model)}}`
     );
   }
@@ -126,7 +127,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
       `;
     }
 
-    return this.emitter.result.literal(
+    return this.emitter.result.rawCode(
       code`${docString}${name}${
         property.optional ? "?" : ""
       }: ${this.emitter.emitTypeReference(property.type)}`
@@ -237,6 +238,10 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
 
   unionVariant(variant: UnionVariant): EmitEntityOrString {
     return this.emitter.emitTypeReference(variant.type);
+  }
+
+  tupleLiteral(tuple: Tuple): EmitEntityOrString {
+    return code`[${this.emitter.emitTupleLiteralValues(tuple)}]`;
   }
 
   reference(

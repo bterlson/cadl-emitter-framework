@@ -224,6 +224,16 @@ describe("typescript emitter", () => {
     assert.match(contents, /export type TUstring = string \| null/);
   });
 
+  it.only("emits tuple types", async () => {
+    const contents = await emitCadlToTs(`
+      model Foo {
+        x: [string, int32];
+      }
+    `);
+
+    assert.match(contents, /x: \[string, number\]/);
+  });
+
   it("emits models to a single file", async () => {
     const host = await getHostForCadlFile(testCode);
     const program = host.program;
@@ -318,7 +328,7 @@ describe("typescript emitter", () => {
     })
   });
 
-  it("emits to namespaces", async () => {
+  it.only("emits to namespaces", async () => {
     const host = await getHostForCadlFile(testCode);
     const program = host.program;
     const context = createEmitterContext(host.program);
@@ -452,11 +462,11 @@ it("handles circular references", async () => {
       for (const prop of model.properties.values()) {
         builder.push(code`${this.emitter.emitModelProperty(prop)}`);
       }
-      return this.emitter.result.literal(builder);
+      return this.emitter.result.rawCode(builder);
     }
 
     modelPropertyLiteral(property: ModelProperty): EmitEntity {
-      return this.emitter.result.literal(code`${this.emitter.emitTypeReference(property.type)}`);
+      return this.emitter.result.rawCode(code`${this.emitter.emitTypeReference(property.type)}`);
     }
 
     sourceFile(sourceFile: SourceFile): EmittedSourceFile {
@@ -510,11 +520,11 @@ it("handles multiple circular references", async () => {
       for (const prop of model.properties.values()) {
         builder.push(code`${this.emitter.emitModelProperty(prop)}`);
       }
-      return this.emitter.result.literal(builder);
+      return this.emitter.result.rawCode(builder);
     }
 
     modelPropertyLiteral(property: ModelProperty): EmitEntity {
-      return this.emitter.result.literal(code`${this.emitter.emitTypeReference(property.type)}`);
+      return this.emitter.result.rawCode(code`${this.emitter.emitTypeReference(property.type)}`);
     }
 
     sourceFile(sourceFile: SourceFile): EmittedSourceFile {

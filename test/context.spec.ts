@@ -1,5 +1,5 @@
 import { Model, ModelProperty, Namespace, Program } from "@cadl-lang/compiler";
-import { Context, ContextState, Declaration, EmitEntity, Scope, SourceFile, TypeEmitter } from "../src/index.js";
+import { Context, ContextState, Declaration, EmitEntity, EmitEntityOrString, Scope, SourceFile, TypeEmitter } from "../src/index.js";
 import { createEmitContext, emitCadl } from "./host.js";
 import { SinonSandboxConfig, spy, SinonSpy } from "sinon";
 import assert from "assert";
@@ -8,7 +8,7 @@ describe("emitter context", async () => {
   describe("program context", async () => {
     it("should be initialized to empty state", async () => {
       class Emitter extends TypeEmitter {
-        modelDeclaration(model: Model, name: string): EmitEntity {
+        modelDeclaration(model: Model, name: string): EmitEntityOrString {
           const context = this.emitter.getContext();
           assert.deepStrictEqual(context, {});
           return super.modelDeclaration(model, name);
@@ -25,7 +25,7 @@ describe("emitter context", async () => {
               inProgram: true,
           };
         }
-        modelDeclaration(model: Model, name: string): EmitEntity {
+        modelDeclaration(model: Model, name: string): EmitEntityOrString {
           const context = this.emitter.getContext();
           assert.deepStrictEqual(context, {inProgram: true
           });
@@ -44,7 +44,7 @@ describe("emitter context", async () => {
           return  {inNamespace: true} 
         }
 
-        namespace(namespace: Namespace): EmitEntity {
+        namespace(namespace: Namespace): EmitEntityOrString {
           assert.deepStrictEqual(this.emitter.getContext(), {
             inNamespace: true
           });
@@ -62,7 +62,7 @@ describe("emitter context", async () => {
           return { inNamespace: namespace.name }
         }
 
-        namespace(namespace: Namespace): EmitEntity {
+        namespace(namespace: Namespace): EmitEntityOrString {
           assert.deepStrictEqual(this.emitter.getContext(), {inNamespace: namespace.name
           });
 
@@ -89,7 +89,7 @@ describe("emitter context", async () => {
           return newState;
         }
 
-        namespace(namespace: Namespace): EmitEntity {
+        namespace(namespace: Namespace): EmitEntityOrString {
           const expectedContext: Record<string, boolean> = { foo: true };
           
           if (namespace.name === "Bar") {
@@ -117,14 +117,14 @@ describe("emitter context", async () => {
               inModel: true
           }
         }
-        modelDeclaration(model: Model, name: string): EmitEntity {
+        modelDeclaration(model: Model, name: string): EmitEntityOrString {
           assert.deepStrictEqual(this.emitter.getContext(), {
               inModel: true
           });
           return super.modelDeclaration(model, name);
         }
         
-        modelPropertyLiteral(property: ModelProperty): EmitEntity {
+        modelPropertyLiteral(property: ModelProperty): EmitEntityOrString {
           assert.deepStrictEqual(this.emitter.getContext(), {
               inModel: true
           });
@@ -139,13 +139,13 @@ describe("emitter context", async () => {
 
     it("sets model context for nested model literals", async () => {
       class Emitter extends TypeEmitter {
-        modelDeclarationContext(model: Model, name: string): State {
+        modelDeclarationContext(model: Model, name: string): Context {
           return {
               inModel: true
           }
         }
   
-        modelLiteral(model: Model): EmitEntity {
+        modelLiteral(model: Model): EmitEntityOrString {
           assert.deepStrictEqual(this.emitter.getContext(), {
               inModel: true
           });
@@ -171,7 +171,7 @@ describe("emitter context", async () => {
             };
         }
   
-        modelDeclaration(model: Model, name: string): EmitEntity {
+        modelDeclaration(model: Model, name: string): EmitEntityOrString {
           const context = this.emitter.getContext();
           if (name === "Foo") {
             assert(context.inANamespace);
@@ -207,7 +207,7 @@ describe("emitter context", async () => {
           return {};
         }
 
-        modelDeclaration(model: Model, name: string): EmitEntity {
+        modelDeclaration(model: Model, name: string): EmitEntityOrString {
           const context = this.emitter.getContext();
           if (model.name === "N") {
             seenContexts.add(context.refFromNs ?? false);
@@ -241,7 +241,7 @@ describe("emitter context", async () => {
           return { ref: true }
         }
 
-        modelDeclaration(model: Model, name: string): EmitEntity {
+        modelDeclaration(model: Model, name: string): EmitEntityOrString {
           return super.modelDeclaration(model, name);
         }
       }

@@ -108,17 +108,6 @@ export function createEmitterContext(program: Program): EmitContext {
             }
             return entity;
           },
-          literal(code) {
-            const entity: Literal = {
-              kind: "literal",
-              code,
-            };
-
-            if (code instanceof CodeBuilder) {
-              code.onComplete((value) => (entity.code = value));
-            }
-            return entity;
-          },
           rawCode(code) {
             const entity: RawCode = {
               kind: "code",
@@ -210,7 +199,7 @@ export function createEmitterContext(program: Program): EmitContext {
             const builder = new CodeBuilder();
             placeholder = new Placeholder();
             builder.push(placeholder);
-            return this.result.literal(builder);
+            return this.result.rawCode(builder);
           }
 
           return invokeReference(entity);
@@ -250,7 +239,7 @@ export function createEmitterContext(program: Program): EmitContext {
             );
 
             if (typeof ref === "string" || ref instanceof CodeBuilder) {
-              ref = _this.result.literal(ref);
+              ref = _this.result.rawCode(ref);
             }
 
             if (placeholder) {
@@ -365,7 +354,7 @@ export function createEmitterContext(program: Program): EmitContext {
         emitModelProperties(model) {
           const entity = typeEmitter.modelProperties(model);
           if (typeof entity === "string" || entity instanceof CodeBuilder) {
-            return this.result.literal(entity);
+            return this.result.rawCode(entity);
           }
 
           return entity;
@@ -410,6 +399,10 @@ export function createEmitterContext(program: Program): EmitContext {
 
         emitUnionVariants(union) {
           return invokeTypeEmitter("unionVariants", union);
+        },
+
+        emitTupleLiteralValues(tuple) {
+          return invokeTypeEmitter("tupleLiteralValues", tuple);
         }
       };
 
@@ -449,7 +442,7 @@ export function createEmitterContext(program: Program): EmitContext {
           }
           entity = (typeEmitter[method] as any)(...args);
           if (typeof entity === "string" || entity instanceof CodeBuilder) {
-            entity = assetEmitter.result.literal(entity);
+            entity = assetEmitter.result.rawCode(entity);
           }
         });
 
@@ -631,6 +624,8 @@ export function createEmitterContext(program: Program): EmitContext {
             return "unionInstantiation";
           case "UnionVariant":
             return "unionVariant";
+          case "Tuple":
+            return "tupleLiteral";
           default:
             throw new Error("Unknown type: " + type.kind);
         }
