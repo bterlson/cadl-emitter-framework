@@ -669,7 +669,6 @@ describe("Object emitter", () => {
 
       const obj: { declarations: object[] } = { declarations: [] };
       for (const decl of sourceFile.globalScope.declarations) {
-        console.log("Have decl");
         if (decl.value instanceof Placeholder) {
           obj.declarations.push({ placeholder: true });
         } else {
