@@ -1,74 +1,95 @@
-import { Program, Type, Model, ModelProperty, Operation, Union, Enum, Interface, Tuple } from "@cadl-lang/compiler";
-import { CodeBuilder } from "./code-builder.js";
+import {
+  Program,
+  Type,
+  Model,
+  ModelProperty,
+  Operation,
+  Union,
+  Enum,
+  Interface,
+  Tuple,
+} from "@cadl-lang/compiler";
 import { TypeEmitter } from "./type-emitter.js";
+import { Placeholder } from "./placeholder.js";
 
 export interface EmitContext {
   program: Program;
   AssetTag: AssetTag;
-  createAssetEmitter(
-    TypeEmitterClass: typeof TypeEmitter,
+  createAssetEmitter<T>(
+    TypeEmitterClass: typeof TypeEmitter<T>,
     ...tags: AssetTagInstance[]
-  ): AssetEmitter;
+  ): AssetEmitter<T>;
 }
 
-export interface AssetEmitter {
+export interface AssetEmitter<T> {
   getContext(): Context;
   getProgram(): Program;
-  emitTypeReference(type: Type): EmitEntity;
+  emitTypeReference(type: Type): EmitEntity<T>;
   emitDeclarationName(type: CadlDeclaration): string;
-  emitType(type: Type): EmitEntity;
+  emitType(type: Type): EmitEntity<T>;
   emitProgram(options?: {
     emitGlobalNamespace?: boolean;
     emitCadlNamespace?: boolean;
   }): void;
-  emitModelProperties(model: Model): EmitEntity;
-  emitModelProperty(prop: ModelProperty): EmitEntity;
-  emitOperationParameters(operation: Operation): EmitEntity;
-  emitOperationReturnType(operation: Operation): EmitEntity;
-  emitInterfaceOperations(iface: Interface): EmitEntity;
-  emitInterfaceOperation(operation: Operation): EmitEntity;
-  emitEnumMembers(en: Enum): EmitEntity;
-  emitUnionVariants(union: Union): EmitEntity;
-  emitTupleLiteralValues(tuple: Tuple): EmitEntity;
-  createSourceFile(name: string): SourceFile;
-  createScope(sourceFile: SourceFile, name: string): SourceFileScope;
-  createScope(namespace: any, name: string, parentScope: Scope): NamespaceScope;
-  createScope(block: any, name: string, parentScope?: Scope | null): Scope;
+  emitModelProperties(model: Model): EmitEntity<T>;
+  emitModelProperty(prop: ModelProperty): EmitEntity<T>;
+  emitOperationParameters(operation: Operation): EmitEntity<T>;
+  emitOperationReturnType(operation: Operation): EmitEntity<T>;
+  emitInterfaceOperations(iface: Interface): EmitEntity<T>;
+  emitInterfaceOperation(operation: Operation): EmitEntity<T>;
+  emitEnumMembers(en: Enum): EmitEntity<T>;
+  emitUnionVariants(union: Union): EmitEntity<T>;
+  emitTupleLiteralValues(tuple: Tuple): EmitEntity<T>;
+  createSourceFile(name: string): SourceFile<T>;
+  createScope(sourceFile: SourceFile<T>, name: string): SourceFileScope<T>;
+  createScope(
+    namespace: any,
+    name: string,
+    parentScope: Scope<T>
+  ): NamespaceScope<T>;
+  createScope(
+    block: any,
+    name: string,
+    parentScope?: Scope<T> | null
+  ): Scope<T>;
   result: {
-    declaration(name: string, code: string | CodeBuilder): Declaration;
-    rawCode(code: string | CodeBuilder): RawCode;
+    declaration(
+      name: string,
+      value: T | Placeholder<T>
+    ): Declaration<T>;
+    rawCode(value: T | Placeholder<T>): RawCode<T>;
     none(): NoEmit;
   };
   writeOutput(): Promise<void>;
 }
 
-export interface ScopeBase {
+export interface ScopeBase<T> {
   kind: string;
   name: string;
-  parentScope: Scope | null;
-  childScopes: Scope[];
-  declarations: Declaration[];
+  parentScope: Scope<T> | null;
+  childScopes: Scope<T>[];
+  declarations: Declaration<T>[];
 }
 
-export interface SourceFileScope extends ScopeBase {
+export interface SourceFileScope<T> extends ScopeBase<T> {
   kind: "sourceFile";
-  sourceFile: SourceFile;
+  sourceFile: SourceFile<T>;
 }
 
-export interface NamespaceScope extends ScopeBase {
+export interface NamespaceScope<T> extends ScopeBase<T> {
   kind: "namespace";
   namespace: any;
 }
 
-export type Scope = SourceFileScope | NamespaceScope;
+export type Scope<T> = SourceFileScope<T> | NamespaceScope<T>;
 
 export interface TypeReference {
   expression: string;
 }
 
-export interface SourceFile {
+export interface SourceFile<T> {
   path: string;
-  globalScope: Scope;
+  globalScope: Scope<T>;
   imports: Map<string, string[]>;
 }
 
@@ -77,41 +98,43 @@ export interface EmittedSourceFile {
   path: string;
 }
 
-export type EmitEntity =
-  | Declaration
-  | Literal
-  | RawCode
-  | NoEmit
-  | CircularEmit;
+export type EmitEntity<T> = Declaration<T> | RawCode<T> | NoEmit | CircularEmit;
 
-export type EmitEntityOrString = EmitEntity | string | CodeBuilder;
+export class EmitterResult {}
+export class Declaration<T> extends EmitterResult {
+  public kind = "declaration" as const;
 
-export type Declaration = {
-  kind: "declaration";
-  scope: Scope;
-  name: string;
-  code: string | CodeBuilder;
-};
+  constructor(public name: string, public scope: Scope<T>, public value: T | Placeholder<T>) {
+    if (value instanceof Placeholder) {
+      value.onValue(v => this.value = v);
+    }
+    
+    super();
+  }
+}
 
-export type Literal = {
-  kind: "literal";
-  code: string | CodeBuilder;
-};
+export class RawCode<T> extends EmitterResult {
+  public kind = "code" as const;
 
-export type RawCode = {
-  kind: "code";
-  code: string | CodeBuilder;
-};
+  constructor(public value: T | Placeholder<T>) {
+    if (value instanceof Placeholder) {
+      value.onValue(v => this.value = v);
+    }
 
-export type NoEmit = {
-  kind: "none";
-  code: "";
-};
+    super();
+  }
+}
 
-export type CircularEmit = {
-  kind: "circular";
-  emitEntityKey: [string, Type, ContextState];
-};
+export class NoEmit extends EmitterResult {
+  public kind = "none" as const;
+}
+
+export class CircularEmit extends EmitterResult {
+  public kind = "circular" as const;
+  constructor(public emitEntityKey: [string, Type, ContextState]) {
+    super();
+  }
+}
 
 export interface AssetTag {
   language: AssetTagFactory;
@@ -126,7 +149,6 @@ export type AssetTagFactory = {
 
 export type CadlDeclaration = Model | Interface | Union | Operation | Enum;
 
-
 export interface ContextState {
   lexicalContext: Record<string, any>;
   referenceContext: Record<string, any>;
@@ -136,6 +158,6 @@ export type Context = Record<string, any>;
 export type ESRecord = Record<string, any> & { _record: true };
 
 export interface EmitterState {
-  lexicalTypeStack: Type[],
-  context: ContextState
+  lexicalTypeStack: Type[];
+  context: ContextState;
 }

@@ -2,14 +2,12 @@ import {
   Type,
   Program,
   Model,
-  getIntrinsicModelName,
   Interface,
   Union,
   Operation,
   Enum,
   ModelProperty,
   Namespace,
-  namespace,
   BooleanLiteral,
   StringLiteral,
   NumericLiteral,
@@ -18,17 +16,20 @@ import {
   UnionVariant,
   Tuple,
 } from "@cadl-lang/compiler";
-import { code, CodeBuilder } from "./code-builder.js";
-import { AssetEmitter, EmitEntityOrString, EmittedSourceFile, Scope, CadlDeclaration, Context, SourceFile, Declaration, EmitEntity } from "./types.js";
+import { code, StringBuilder } from "./builders/string.js";
+import { Placeholder } from "./placeholder.js";
+import { AssetEmitter, EmittedSourceFile, Scope, CadlDeclaration, Context, SourceFile, Declaration, EmitEntity, EmitterResult, RawCode } from "./types.js";
 
-export class TypeEmitter {
-  constructor(protected emitter: AssetEmitter) {}
+export type EmitterOutput<T> = EmitEntity<T> | Placeholder<T> | T;
+
+export class TypeEmitter<T> {
+  constructor(protected emitter: AssetEmitter<T>) {}
 
   programContext(program: Program) {
     return {};
   }
 
-  namespace(namespace: Namespace): EmitEntityOrString {
+  namespace(namespace: Namespace): EmitterOutput<T> {
     for (const ns of namespace.namespaces.values()) {
       this.emitter.emitType(ns);
     }
@@ -71,7 +72,7 @@ export class TypeEmitter {
     return {};
   }
 
-  modelScalar(model: Model, scalarName: string): EmitEntityOrString {
+  modelScalar(model: Model, scalarName: string): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
@@ -79,7 +80,7 @@ export class TypeEmitter {
     return {}
   }
 
-  modelLiteral(model: Model): EmitEntityOrString {
+  modelLiteral(model: Model): EmitterOutput<T> {
     if (model.baseModel) {
       this.emitter.emitType(model.baseModel);
     }
@@ -96,7 +97,7 @@ export class TypeEmitter {
     return {};
   }
 
-  modelDeclaration(model: Model, name: string): EmitEntityOrString {
+  modelDeclaration(model: Model, name: string): EmitterOutput<T> {
     if (model.baseModel) {
       this.emitter.emitType(model.baseModel);
     }
@@ -108,11 +109,11 @@ export class TypeEmitter {
     return {};
   }
 
-  modelDeclarationReferenceContext(model: Model, name: string): Context {
+  modelDeclarationReferenceContext(model: Model): Context {
     return {};
   }
 
-  modelInstantiation(model: Model, name: string): EmitEntityOrString {
+  modelInstantiation(model: Model, name: string): EmitterOutput<T> {
     if (model.baseModel) {
       this.emitter.emitType(model.baseModel);
     }
@@ -128,17 +129,14 @@ export class TypeEmitter {
     return {};
   }
 
-  modelProperties(model: Model): EmitEntity {
-    const builder = new CodeBuilder();
-    let i = 0;
+  modelProperties(model: Model): EmitterOutput<T> {
     for (const prop of model.properties.values()) {
-      i++;
-      builder.push(code`${this.emitter.emitModelProperty(prop)}${i < model.properties.size ? ',' : ''}`);
+      this.emitter.emitModelProperty(prop);
     }
-    return this.emitter.result.rawCode(builder.reduce());
+    return this.emitter.result.none();
   }
 
-  modelPropertyLiteral(property: ModelProperty): EmitEntityOrString {
+  modelPropertyLiteral(property: ModelProperty): EmitterOutput<T> {
     this.emitter.emitTypeReference(property.type);
     return this.emitter.result.none();
   }
@@ -151,15 +149,15 @@ export class TypeEmitter {
     return {};
   }
 
-  modelPropertyReference(property: ModelProperty): EmitEntityOrString {
-    return code`${this.emitter.emitTypeReference(property.type)}`
+  modelPropertyReference(property: ModelProperty): EmitterOutput<T> {
+    return this.emitter.emitTypeReference(property.type);
   }
 
   booleanLiteralContext(boolean: BooleanLiteral): Context {
     return {};
   }
 
-  booleanLiteral(boolean: BooleanLiteral): EmitEntityOrString {
+  booleanLiteral(boolean: BooleanLiteral): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
@@ -167,7 +165,7 @@ export class TypeEmitter {
     return {};
   }
 
-  stringLiteral(string: StringLiteral): EmitEntityOrString {
+  stringLiteral(string: StringLiteral): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
@@ -175,11 +173,11 @@ export class TypeEmitter {
     return {};
   }
 
-  numericLiteral(number: NumericLiteral): EmitEntityOrString {
+  numericLiteral(number: NumericLiteral): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
-  operationDeclaration(operation: Operation, name: string): EmitEntityOrString {
+  operationDeclaration(operation: Operation, name: string): EmitterOutput<T> {
     this.emitter.emitOperationParameters(operation);
     this.emitter.emitOperationReturnType(operation);
 
@@ -194,7 +192,7 @@ export class TypeEmitter {
     return {};
   }
 
-  operationParameters(operation: Operation, parameters: Model): EmitEntityOrString {
+  operationParameters(operation: Operation, parameters: Model): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
@@ -206,7 +204,7 @@ export class TypeEmitter {
     return {}
   }
 
-  operationReturnType(operation: Operation, returnType: Type): EmitEntityOrString {
+  operationReturnType(operation: Operation, returnType: Type): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
@@ -218,7 +216,7 @@ export class TypeEmitter {
     return {}
   }
 
-  interfaceDeclaration(iface: Interface, name: string): EmitEntityOrString {
+  interfaceDeclaration(iface: Interface, name: string): EmitterOutput<T> {
     this.emitter.emitInterfaceOperations(iface);
     return this.emitter.result.none()
   }
@@ -231,17 +229,14 @@ export class TypeEmitter {
     return {};
   }
 
-  interfaceDeclarationOperations(iface: Interface): EmitEntityOrString {
-    const builder = new CodeBuilder();
-    let i = 0;
+  interfaceDeclarationOperations(iface: Interface): EmitterOutput<T> {
     for (const op of iface.operations.values()) {
-      i++;
-      builder.push(code`${this.emitter.emitInterfaceOperation(op)}${i < iface.operations.size ? ',' : ''}`);
+      this.emitter.emitInterfaceOperation(op);
     }
-    return builder.reduce();
+    return this.emitter.result.none();
   }
 
-  interfaceOperationDeclaration(operation: Operation, name: string): EmitEntityOrString {
+  interfaceOperationDeclaration(operation: Operation, name: string): EmitterOutput<T> {
     this.emitter.emitOperationParameters(operation);
     this.emitter.emitOperationReturnType(operation);
 
@@ -256,7 +251,7 @@ export class TypeEmitter {
     return {};
   }
 
-  enumDeclaration(en: Enum, name: string): EmitEntityOrString {
+  enumDeclaration(en: Enum, name: string): EmitterOutput<T> {
     this.emitter.emitEnumMembers(en);
     return this.emitter.result.none();
   }
@@ -265,17 +260,14 @@ export class TypeEmitter {
     return {};
   }
 
-  enumMembers(en: Enum): EmitEntityOrString {
-    const builder = new CodeBuilder();
-    let i = 0;
-    for (const enumMember of en.members.values()) {
-      i++;
-      builder.push(code`${this.emitter.emitType(enumMember)}${i < en.members.size ? ',' : ''}`);
+  enumMembers(en: Enum): EmitterOutput<T> {
+    for (const member of en.members.values()) {
+      this.emitter.emitType(member);
     }
-    return builder.reduce();
+    return this.emitter.result.none();
   }
 
-  enumMember(member: EnumMember): EmitEntityOrString {
+  enumMember(member: EnumMember): EmitterOutput<T> {
     return this.emitter.result.none();
   }
 
@@ -283,7 +275,7 @@ export class TypeEmitter {
     return {};
   }
 
-  unionDeclaration(union: Union, name: string): EmitEntityOrString {
+  unionDeclaration(union: Union, name: string): EmitterOutput<T> {
     this.emitter.emitUnionVariants(union);
     return this.emitter.result.none();
   }
@@ -296,7 +288,7 @@ export class TypeEmitter {
     return {};
   }
 
-  unionInstantiation(union: Union, name: string): EmitEntityOrString {
+  unionInstantiation(union: Union, name: string): EmitterOutput<T> {
     this.emitter.emitUnionVariants(union);
     return this.emitter.result.none();
   }
@@ -309,7 +301,7 @@ export class TypeEmitter {
     return {};
   }
 
-  unionLiteral(union: Union): EmitEntityOrString {
+  unionLiteral(union: Union): EmitterOutput<T> {
     this.emitter.emitUnionVariants(union);
     return this.emitter.result.none();
   }
@@ -322,17 +314,14 @@ export class TypeEmitter {
     return {};
   }
 
-  unionVariants(union: Union): EmitEntityOrString {
-    const builder = new CodeBuilder();
-    let i = 0;
-    for (const v of union.variants.values()) {
-      i++;
-      builder.push(code`${this.emitter.emitType(v)}${i < union.variants.size ? ',' : ''}`);
+  unionVariants(union: Union): EmitterOutput<T> {
+    for (const variant of union.variants.values()) {
+      this.emitter.emitType(variant);
     }
-    return builder.reduce();
+    return this.emitter.result.none();
   }
 
-  unionVariant(variant: UnionVariant): EmitEntityOrString {
+  unionVariant(variant: UnionVariant): EmitterOutput<T> {
     this.emitter.emitTypeReference(variant.type);
     return this.emitter.result.none();
   }
@@ -344,7 +333,7 @@ export class TypeEmitter {
     return {};
   }
 
-  tupleLiteral(tuple: Tuple): EmitEntityOrString {
+  tupleLiteral(tuple: Tuple): EmitterOutput<T> {
     this.emitter.emitTupleLiteralValues(tuple);
     return this.emitter.result.none();
   }
@@ -353,44 +342,37 @@ export class TypeEmitter {
     return {};
   }
 
+  tupleLiteralValues(tuple: Tuple): EmitterOutput<T> {
+    for (const value of tuple.values.values()) {
+      this.emitter.emitType(value);
+    }
+    return this.emitter.result.none();
+  }
+
   tupleLiteralReferenceContext(tuple: Tuple): Context {
     return {};
   }
 
-  tupleLiteralValues(tuple: Tuple): EmitEntityOrString {
-    const builder = new CodeBuilder();
-    let i = 0;
-    for (const v of tuple.values) {
-      i++;
-      builder.push(code`${this.emitter.emitTypeReference(v)}${i < tuple.values.length ? ',' : ''}`);
-    }
-    return builder.reduce();
-  }
-
-
-  sourceFile(sourceFile: SourceFile): EmittedSourceFile {
+  sourceFile(sourceFile: SourceFile<T>): EmittedSourceFile {
     const emittedSourceFile: EmittedSourceFile = {
       path: sourceFile.path,
       contents: "",
     };
 
     for (const decl of sourceFile.globalScope.declarations) {
-      emittedSourceFile.contents += decl.code + "\n";
+      emittedSourceFile.contents += decl.value + "\n";
     }
 
     return emittedSourceFile;
   }
 
   reference(
-    targetDeclaration: Declaration,
-    pathUp: Scope[],
-    pathDown: Scope[],
-    commonScope: Scope | null
-  ): EmitEntityOrString {
-    const basePath = pathDown.map((s) => s.name).join(".");
-    return basePath
-      ? this.emitter.result.rawCode(basePath + "." + targetDeclaration.name)
-      : this.emitter.result.rawCode(targetDeclaration.name);
+    targetDeclaration: Declaration<T>,
+    pathUp: Scope<T>[],
+    pathDown: Scope<T>[],
+    commonScope: Scope<T> | null
+  ): EmitEntity<T> | T {
+    return this.emitter.result.none();
   }
 
   declarationName(declarationType: CadlDeclaration): string {
@@ -428,5 +410,85 @@ export class TypeEmitter {
     });
 
     return declarationType.name + parameterNames.join("");
+  }
+
+  /**
+   * Coerces an emit entity to a value. If the emit entity has a value (i.e. is
+   * a declaration or code), and that value is not a placeholder, return the value.
+   * Otherwise, return null.
+   * 
+   * @param entity The entity to get the value from
+   * @returns Either the value, or null if there is no value
+   */
+  emitValue(entity: EmitEntity<T>): T | null {
+    switch (entity.kind) {
+      case "declaration":
+      case "code":
+        if (entity.value instanceof Placeholder) {
+          return null;
+        }
+        return entity.value;
+      default:
+        return null;
+    }
+  }
+}
+
+export class CodeTypeEmitter extends TypeEmitter<string> {
+  modelProperties(model: Model): EmitterOutput<string> {
+    const builder = new StringBuilder();
+    let i = 0;
+    for (const prop of model.properties.values()) {
+      i++;
+      builder.push(code`${this.emitter.emitModelProperty(prop)}${i < model.properties.size ? ',' : ''}`);
+    }
+    return this.emitter.result.rawCode(builder.reduce());
+  }
+
+  interfaceDeclarationOperations(iface: Interface): EmitterOutput<string> {
+    const builder = new StringBuilder();
+    let i = 0;
+    for (const op of iface.operations.values()) {
+      i++;
+      builder.push(code`${this.emitter.emitInterfaceOperation(op)}${i < iface.operations.size ? ',' : ''}`);
+    }
+    return builder.reduce();
+  }
+
+  enumMembers(en: Enum): EmitterOutput<string> {
+    const builder = new StringBuilder();
+    let i = 0;
+    for (const enumMember of en.members.values()) {
+      i++;
+      builder.push(code`${this.emitter.emitType(enumMember)}${i < en.members.size ? ',' : ''}`);
+    }
+    return builder.reduce();
+  }
+
+  unionVariants(union: Union): EmitterOutput<string> {
+    const builder = new StringBuilder();
+    let i = 0;
+    for (const v of union.variants.values()) {
+      i++;
+      builder.push(code`${this.emitter.emitType(v)}${i < union.variants.size ? ',' : ''}`);
+    }
+    return builder.reduce();
+  }
+
+  tupleLiteralValues(tuple: Tuple): EmitterOutput<string> {
+    const builder = new StringBuilder();
+    let i = 0;
+    for (const v of tuple.values) {
+      i++;``
+      builder.push(code`${this.emitter.emitTypeReference(v)}${i < tuple.values.length ? ',' : ''}`);
+    }
+    return builder.reduce();
+  }
+
+  reference(targetDeclaration: Declaration<string>, pathUp: Scope<string>[], pathDown: Scope<string>[], commonScope: Scope<string> | null): string | EmitEntity<string> {
+    const basePath = pathDown.map((s) => s.name).join(".");
+    return basePath
+      ? this.emitter.result.rawCode(basePath + "." + targetDeclaration.name)
+      : this.emitter.result.rawCode(targetDeclaration.name);
   }
 }

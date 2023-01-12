@@ -6,7 +6,7 @@ import {
   Namespace,
   isTemplateDeclaration,
 } from "@cadl-lang/compiler";
-import { CodeBuilder, Placeholder } from "./code-builder.js";
+import { Placeholder } from "./placeholder.js";
 import { CustomKeyMap } from "./custom-key-map.js";
 import { TypeEmitter } from "./type-emitter.js";
 import {
@@ -16,7 +16,6 @@ import {
   ContextState,
   EmitEntity,
   EmitterState,
-  Literal,
   RawCode,
   Scope,
   SourceFileScope,
@@ -24,12 +23,16 @@ import {
   AssetTagFactory,
   CadlDeclaration,
   Declaration,
-  SourceFile
+  SourceFile,
+  NoEmit,
+  EmitterResult,
+  CircularEmit
 } from "./types.js";
 
 type EndingWith<Names, Name extends string> = Names extends `${infer _X}${Name}`
   ? Names
   : never;
+
 
 export function createEmitterContext(program: Program): EmitContext {
   return {
@@ -40,16 +43,16 @@ export function createEmitterContext(program: Program): EmitContext {
       },
       language: createAssetTagFactory("language"),
     },
-    createAssetEmitter(
+    createAssetEmitter<T>(
       TypeEmitterClass: typeof TypeEmitter,
       ...tags: AssetTagInstance[]
-    ): AssetEmitter {
-      const sourceFiles: SourceFile[] = [];
+    ): AssetEmitter<T> {
+      const sourceFiles: SourceFile<T>[] = [];
       const typeId = CustomKeyMap.objectKeyer();
       const contextId = CustomKeyMap.objectKeyer();
       const typeToEmitEntity = new CustomKeyMap<
         [string, Type, ContextState],
-        EmitEntity
+        EmitEntity<T>
       >(([method, type, context]) => {
         return `${method}-${typeId.getKey(type)}-${contextId.getKey(context)}`;
       });
@@ -57,7 +60,7 @@ export function createEmitterContext(program: Program): EmitContext {
         [string, Type, ContextState],
         {
           state: EmitterState;
-          cb: (entity: EmitEntity) => EmitEntity;
+          cb: (entity: EmitEntity<T>) => EmitEntity<T>;
         }[]
       >(([method, type]) => {
         return `${method}-${typeId.getKey(type)}`;
@@ -77,7 +80,7 @@ export function createEmitterContext(program: Program): EmitContext {
       let incomingReferenceContext: Record<string, string> | null = null;
       const interner = createInterner();
 
-      const assetEmitter: AssetEmitter = {
+      const assetEmitter: AssetEmitter<T> = {
         getContext() {
           return {
             ...context.lexicalContext,
@@ -88,7 +91,7 @@ export function createEmitterContext(program: Program): EmitContext {
           return program;
         },
         result: {
-          declaration(name, code) {
+          declaration(name, value) {
             const scope = currentScope();
             if (!scope) {
               throw new Error(
@@ -96,42 +99,17 @@ export function createEmitterContext(program: Program): EmitContext {
               );
             }
 
-            const entity: Declaration = {
-              kind: "declaration",
-              scope,
-              name,
-              code,
-            };
-
-            if (code instanceof CodeBuilder) {
-              code.onComplete((value) => (entity.code = value));
-            }
-            return entity;
+            return new Declaration(name, scope, value);
           },
-          rawCode(code) {
-            const entity: RawCode = {
-              kind: "code",
-              code,
-            };
-
-            if (code instanceof CodeBuilder) {
-              code.onComplete((value) => (entity.code = value));
-            }
-
-            return {
-              kind: "code",
-              code,
-            };
+          rawCode(value) {
+            return new RawCode(value);
           },
           none() {
-            return {
-              kind: "none",
-              code: "",
-            };
+            return new NoEmit();
           },
         },
-        createScope(block, name, parentScope: Scope | null = null) {
-          let newScope: Scope;
+        createScope(block, name, parentScope: Scope<T> | null = null) {
+          let newScope: Scope<T>;
           if ("imports" in block) {
             // create source file scope
             newScope = {
@@ -141,7 +119,7 @@ export function createEmitterContext(program: Program): EmitContext {
               parentScope,
               childScopes: [],
               declarations: [],
-            } as SourceFileScope;
+            } as SourceFileScope<T>;
           } else {
             newScope = {
               kind: "namespace",
@@ -150,14 +128,14 @@ export function createEmitterContext(program: Program): EmitContext {
               childScopes: [],
               declarations: [],
               parentScope,
-            } as NamespaceScope;
+            } as NamespaceScope<T>;
           }
 
           parentScope?.childScopes.push(newScope);
           return newScope as any; // todo: fix?
         },
 
-        createSourceFile(path): SourceFile {
+        createSourceFile(path): SourceFile<T> {
           const sourceFile = {
             globalScope: undefined as any,
             path,
@@ -168,9 +146,8 @@ export function createEmitterContext(program: Program): EmitContext {
           return sourceFile;
         },
 
-        emitTypeReference(target): EmitEntity {
+        emitTypeReference(target): EmitEntity<T> {
           const _this = this;
-
 
           if (target.kind === "ModelProperty") {
             return invokeTypeEmitter("modelPropertyReference", target);
@@ -179,8 +156,8 @@ export function createEmitterContext(program: Program): EmitContext {
           incomingReferenceContext = context.referenceContext ?? null;
 
           const entity = this.emitType(target);
-
-          let placeholder: Placeholder | null = null;
+          
+          let placeholder: Placeholder<T> | null = null;
 
           if (entity.kind === "circular") {
             let waiting = waitingCircularRefs.get(entity.emitEntityKey);
@@ -196,15 +173,16 @@ export function createEmitterContext(program: Program): EmitContext {
               },
               cb: invokeReference,
             });
-            const builder = new CodeBuilder();
+            
             placeholder = new Placeholder();
-            builder.push(placeholder);
-            return this.result.rawCode(builder);
+            return this.result.rawCode(placeholder);
+          } else {
+            return invokeReference(entity);
           }
 
-          return invokeReference(entity);
+          
 
-          function invokeReference(entity: EmitEntity): EmitEntity {
+          function invokeReference(entity: EmitEntity<T>): EmitEntity<T> {
             if (entity.kind !== "declaration") {
               return entity;
             }
@@ -228,8 +206,8 @@ export function createEmitterContext(program: Program): EmitContext {
               diffStart++;
             }
 
-            const pathUp: Scope[] = currentChain.slice(diffStart);
-            const pathDown: Scope[] = targetChain.slice(diffStart);
+            const pathUp: Scope<T>[] = currentChain.slice(diffStart);
+            const pathDown: Scope<T>[] = targetChain.slice(diffStart);
 
             let ref = typeEmitter.reference(
               entity,
@@ -238,27 +216,41 @@ export function createEmitterContext(program: Program): EmitContext {
               targetChain[diffStart - 1] ?? null
             );
 
-            if (typeof ref === "string" || ref instanceof CodeBuilder) {
-              ref = _this.result.rawCode(ref);
+            if (ref instanceof Placeholder) {
+              // todo: think about this?
+              throw new Error("Still circular");
+            }
+
+            if (!(ref instanceof EmitterResult)) {
+              ref = _this.result.rawCode(ref) as RawCode<T>;
             }
 
             if (placeholder) {
               if (ref.kind === "circular") {
-                throw new Error("Circular resulted in circular?");
+                throw new Error("still circular");
               }
 
-              if (typeof ref.code !== "string") {
-                // todo: maybe ok if this results in a code builder? But unlikely for references...
-                throw new Error("still circular?");
+              if (ref.kind !== "none" && ref.value instanceof Placeholder) {
+                throw new Error("Reference cannot return a placeholder");
               }
-
-              placeholder.setValue(ref.code);
+              
+              switch (ref.kind) {
+                case "code":
+                case "declaration":
+                  placeholder.setValue(ref.value as T);
+                  break;
+                case "none":
+                  // this cast is incorrect, think about what should happen
+                  // if reference returns noEmit...
+                  placeholder.setValue("" as T);
+                  break;
+              }
             }
 
             return ref;
           }
 
-          function scopeChain(scope: Scope | null) {
+          function scopeChain(scope: Scope<T> | null) {
             let chain = [];
             while (scope) {
               chain.unshift(scope);
@@ -352,12 +344,12 @@ export function createEmitterContext(program: Program): EmitContext {
         },
 
         emitModelProperties(model) {
-          const entity = typeEmitter.modelProperties(model);
-          if (typeof entity === "string" || entity instanceof CodeBuilder) {
-            return this.result.rawCode(entity);
+          let res = typeEmitter.modelProperties(model);
+          if (res instanceof EmitterResult) {
+            return res;
+          } else {
+            return this.result.rawCode(res);
           }
-
-          return entity;
         },
 
         emitModelProperty(property) {
@@ -410,16 +402,17 @@ export function createEmitterContext(program: Program): EmitContext {
       return assetEmitter;
 
       function invokeTypeEmitter<
-        T extends keyof Omit<
-          TypeEmitter,
+        TMethod extends keyof Omit<
+          TypeEmitter<T>,
           | "sourceFile"
           | "declarationName"
           | "reference"
-          | EndingWith<keyof TypeEmitter, "Context">
+          | "emitValue"
+          | EndingWith<keyof TypeEmitter<T>, "Context">
         >
-      >(method: T, ...args: Parameters<TypeEmitter[T]>) {
+      >(method: TMethod, ...args: Parameters<TypeEmitter<T>[TMethod]>): EmitEntity<T> {
         const type = args[0];
-        let entity: EmitEntity;
+        let entity: EmitEntity<T>;
         let emitEntityKey: [string, Type, ContextState];
         let cached = false;
 
@@ -433,39 +426,50 @@ export function createEmitterContext(program: Program): EmitContext {
             return;
           }
 
-          typeToEmitEntity.set(emitEntityKey, {
-            kind: "circular",
-            emitEntityKey,
-          });
+          typeToEmitEntity.set(emitEntityKey, new CircularEmit(emitEntityKey));
           if (!typeEmitter[method]) {
             throw new Error("Type emitter doesn't have method " + method);
           }
-          entity = (typeEmitter[method] as any)(...args);
-          if (typeof entity === "string" || entity instanceof CodeBuilder) {
-            entity = assetEmitter.result.rawCode(entity);
-          }
+          entity = liftToRawCode((typeEmitter[method] as any)(...args));
         });
 
         if (cached) {
           return entity!;
         }
 
-        typeToEmitEntity.set(emitEntityKey!, entity!);
-        const waitingRefCbs = waitingCircularRefs.get(emitEntityKey!);
-        if (waitingRefCbs) {
-          for (const record of waitingRefCbs) {
-            withContext(record.state, () => {
-              record.cb(entity);
-            });
-          }
-          waitingCircularRefs.set(emitEntityKey!, []);
+        if (entity! instanceof Placeholder) {
+          entity.onValue(v => handleCompletedEntity(v));
+          return entity;
         }
-
-        if (entity!.kind === "declaration") {
-          entity!.scope.declarations.push(entity!);
-        }
+        
+        handleCompletedEntity(entity!);
 
         return entity!;
+
+        function handleCompletedEntity(entity: EmitEntity<T>) {
+          typeToEmitEntity.set(emitEntityKey!, entity!);
+          const waitingRefCbs = waitingCircularRefs.get(emitEntityKey!);
+          if (waitingRefCbs) {
+            for (const record of waitingRefCbs) {
+              withContext(record.state, () => {
+                record.cb(entity);
+              });
+            }
+            waitingCircularRefs.set(emitEntityKey!, []);
+          }
+  
+          if (entity!.kind === "declaration") {
+            entity!.scope.declarations.push(entity!);
+          }
+        }
+
+        function liftToRawCode(value: EmitEntity<T> | Placeholder<T> | T): EmitEntity<T> {
+          if (value instanceof EmitterResult) {
+            return value;
+          }
+
+          return assetEmitter.result.rawCode(value);
+        }
       }
 
       function setContextForType(type: Type) {
@@ -698,6 +702,7 @@ function createInterner() {
       return object;
     },
   };
+  
 }
 
 const noReferenceContext = new Set<string>([
@@ -709,6 +714,6 @@ const noReferenceContext = new Set<string>([
   "enumMember"
 ]);
 
-function keyHasReferenceContext(key: keyof TypeEmitter): boolean {
+function keyHasReferenceContext(key: keyof TypeEmitter<any>): boolean {
   return !noReferenceContext.has(key);
 }

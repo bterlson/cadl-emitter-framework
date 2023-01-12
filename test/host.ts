@@ -2,11 +2,15 @@ import { CadlTestLibrary, createTestHost } from "@cadl-lang/compiler/testing";
 import { navigateProgram, resolvePath } from "@cadl-lang/compiler";
 import { fileURLToPath } from "url";
 import {
-  AssetEmitter,
   createEmitterContext,
-  EmitContext,
-  TypeEmitter,
 } from "../src/framework.js";
+
+import {
+  EmitContext,
+} from "../src/types.js";
+
+import { TypeEmitter } from "../src/type-emitter.js";
+
 import { SinonSpy, spy,  } from "sinon";
 import assert from "assert";
 
@@ -66,13 +70,15 @@ export function emitGlobalNamespace(
   emitter.emitType(emitter.getProgram().getGlobalNamespaceType());
 }
 
-export async function emitCadl(Emitter: typeof TypeEmitter, code: string, callCounts: Partial<Record<keyof TypeEmitter, number>> = {}) {
+export async function emitCadl(Emitter: typeof TypeEmitter<any>, code: string, callCounts: Partial<Record<keyof TypeEmitter<any>, number>> = {}, validateCallCounts = true) {
   const context = await createEmitContext(code);
   const spies = emitterSpies(Emitter);
   const emitter = context.createAssetEmitter(Emitter, {});
   emitter.emitProgram();
   await emitter.writeOutput();
-  assertSpiesCalled(spies, callCounts);
+  if (validateCallCounts) {
+    assertSpiesCalled(spies, callCounts);
+  }
   return emitter;
 }
 
@@ -93,7 +99,7 @@ function emitterSpies(emitter: typeof TypeEmitter) {
   return spies;
 }
 
-function assertSpiesCalled(spies: EmitterSpies, callCounts: Partial<Record<keyof TypeEmitter, number>>) {
+function assertSpiesCalled(spies: EmitterSpies, callCounts: Partial<Record<keyof TypeEmitter<any>, number>>) {
   for (const [key, spy] of Object.entries(spies)) {
     const expectedCount = (callCounts as any)[key] ?? 1;
     assert.equal(spy.callCount, expectedCount, `Emitter method ${key} should called ${expectedCount} time(s), was called ${spy.callCount} time(s)`);

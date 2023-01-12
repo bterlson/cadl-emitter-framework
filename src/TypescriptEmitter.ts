@@ -16,17 +16,15 @@ import {
 } from "@cadl-lang/compiler";
 import prettier from "prettier";
 import {
-  EmitEntity,
   EmittedSourceFile,
   SourceFile,
   Declaration,
   Scope,
   SourceFileScope,
-  EmitEntityOrString,
 } from "./types.js";
 
-import { CodeBuilder, code } from "./code-builder.js";
-import { TypeEmitter } from "./type-emitter.js";
+import { StringBuilder, code } from "./builders/string.js";
+import { CodeTypeEmitter, EmitterOutput } from "./type-emitter.js";
 
 export function isArrayType(m: Model) {
   return m.name === "Array";
@@ -43,21 +41,21 @@ export const intrinsicNameToTSType = new Map<string, string>([
   ["null", "null"],
 ]);
 
-export class TypeScriptInterfaceEmitter extends TypeEmitter {
+export class TypeScriptInterfaceEmitter extends CodeTypeEmitter {
   // type literals
-  booleanLiteral(boolean: BooleanLiteral): EmitEntityOrString {
+  booleanLiteral(boolean: BooleanLiteral): EmitterOutput<string> {
     return JSON.stringify(boolean.value);
   }
 
-  numericLiteral(number: NumericLiteral): EmitEntityOrString {
+  numericLiteral(number: NumericLiteral): EmitterOutput<string> {
     return JSON.stringify(number.value);
   }
 
-  stringLiteral(string: StringLiteral): EmitEntityOrString {
+  stringLiteral(string: StringLiteral): EmitterOutput<string> {
     return JSON.stringify(string.value);
   }
 
-  modelScalar(model: Model, scalarName: string): EmitEntityOrString {
+  modelScalar(model: Model, scalarName: string): EmitterOutput<string> {
     if (!intrinsicNameToTSType.has(scalarName)) {
       throw new Error("Unknown scalar type " + scalarName);
     }
@@ -66,7 +64,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     return this.emitter.result.rawCode(code);
   }
 
-  modelLiteral(model: Model): EmitEntityOrString {
+  modelLiteral(model: Model): EmitterOutput<string> {
     if (isArrayType(model)) {
       return this.emitter.result.rawCode(
         code`${this.emitter.emitTypeReference(model.indexer!.value!)}[]`
@@ -78,7 +76,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     );
   }
 
-  modelDeclaration(model: Model, name: string): EmitEntityOrString {
+  modelDeclaration(model: Model, name: string): EmitterOutput<string> {
     let extendsClause;
     if (model.indexer && model.indexer.key!.name === "integer") {
       extendsClause = code`extends Array<${this.emitter.emitTypeReference(
@@ -110,11 +108,11 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     );
   }
 
-  modelInstantiation(model: Model, name: string): EmitEntityOrString {
+  modelInstantiation(model: Model, name: string): EmitterOutput<string> {
     return this.modelDeclaration(model, name);
   }
 
-  modelPropertyLiteral(property: ModelProperty): EmitEntityOrString {
+  modelPropertyLiteral(property: ModelProperty): EmitterOutput<string> {
     const name = property.name === "_" ? "statusCode" : property.name;
     const doc = getDoc(this.emitter.getProgram(), property);
     let docString = "";
@@ -134,7 +132,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     );
   }
 
-  operationDeclaration(operation: Operation, name: string): EmitEntityOrString {
+  operationDeclaration(operation: Operation, name: string): EmitterOutput<string> {
     return this.emitter.result.declaration(
       name,
       code`interface ${name} {
@@ -146,8 +144,8 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
   operationParameters(
     operation: Operation,
     parameters: Model
-  ): EmitEntityOrString {
-    const cb = new CodeBuilder();
+  ): EmitterOutput<string> {
+    const cb = new StringBuilder();
     for (const prop of parameters.properties.values()) {
       cb.push(
         code`${prop.name}${
@@ -167,11 +165,11 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
   operationReturnType(
     operation: Operation,
     returnType: Type
-  ): EmitEntityOrString {
+  ): EmitterOutput<string> {
     return this.emitter.emitTypeReference(returnType);
   }
 
-  interfaceDeclaration(iface: Interface, name: string): EmitEntityOrString {
+  interfaceDeclaration(iface: Interface, name: string): EmitterOutput<string> {
     return this.emitter.result.declaration(
       name,
       code`
@@ -185,11 +183,11 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
   interfaceOperationDeclaration(
     operation: Operation,
     name: string
-  ): EmitEntityOrString {
+  ): EmitterOutput<string> {
     return code`${name}${this.#operationSignature(operation)}`;
   }
 
-  enumDeclaration(en: Enum, name: string): EmitEntityOrString {
+  enumDeclaration(en: Enum, name: string): EmitterOutput<string> {
     return this.emitter.result.declaration(
       name,
       code`export enum ${name} {
@@ -198,7 +196,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     );
   }
 
-  enumMember(member: EnumMember): EmitEntityOrString {
+  enumMember(member: EnumMember): EmitterOutput<string> {
     // should we just fill in value for you?
     const value = !member.value ? member.name : member.value;
 
@@ -207,14 +205,14 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     `;
   }
 
-  unionDeclaration(union: Union, name: string): EmitEntityOrString {
+  unionDeclaration(union: Union, name: string): EmitterOutput<string> {
     return this.emitter.result.declaration(
       name,
       code`export type ${name} = ${this.emitter.emitUnionVariants(union)}`
     );
   }
 
-  unionInstantiation(union: Union, name: string): EmitEntityOrString {
+  unionInstantiation(union: Union, name: string): EmitterOutput<string> {
     return this.unionDeclaration(union, name);
   }
 
@@ -222,8 +220,8 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     return this.emitter.emitUnionVariants(union);
   }
 
-  unionVariants(union: Union): EmitEntityOrString {
-    const builder = new CodeBuilder();
+  unionVariants(union: Union): EmitterOutput<string> {
+    const builder = new StringBuilder();
     let i = 0;
     for (const variant of union.variants.values()) {
       i++;
@@ -236,23 +234,23 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     return this.emitter.result.rawCode(builder.reduce());
   }
 
-  unionVariant(variant: UnionVariant): EmitEntityOrString {
+  unionVariant(variant: UnionVariant): EmitterOutput<string> {
     return this.emitter.emitTypeReference(variant.type);
   }
 
-  tupleLiteral(tuple: Tuple): EmitEntityOrString {
+  tupleLiteral(tuple: Tuple): EmitterOutput<string> {
     return code`[${this.emitter.emitTupleLiteralValues(tuple)}]`;
   }
 
   reference(
-    targetDeclaration: Declaration,
-    pathUp: Scope[],
-    pathDown: Scope[],
-    commonScope: Scope | null
+    targetDeclaration: Declaration<string>,
+    pathUp: Scope<string>[],
+    pathDown: Scope<string>[],
+    commonScope: Scope<string> | null
   ) {
     if (!commonScope) {
-      const sourceSf = (pathUp[0] as SourceFileScope).sourceFile;
-      const targetSf = (pathDown[0] as SourceFileScope).sourceFile;
+      const sourceSf = (pathUp[0] as SourceFileScope<string>).sourceFile;
+      const targetSf = (pathDown[0] as SourceFileScope<string>).sourceFile;
       console.log(sourceSf, targetSf);
       sourceSf.imports.set(`./${targetSf.path.replace(".js", ".ts")}`, [
         targetDeclaration.name,
@@ -262,7 +260,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     return super.reference(targetDeclaration, pathUp, pathDown, commonScope);
   }
 
-  sourceFile(sourceFile: SourceFile): EmittedSourceFile {
+  sourceFile(sourceFile: SourceFile<string>): EmittedSourceFile {
     const emittedSourceFile: EmittedSourceFile = {
       path: sourceFile.path,
       contents: "",
@@ -275,7 +273,7 @@ export class TypeScriptInterfaceEmitter extends TypeEmitter {
     }
 
     for (const decl of sourceFile.globalScope.declarations) {
-      emittedSourceFile.contents += decl.code + "\n";
+      emittedSourceFile.contents += decl.value + "\n";
     }
 
     emittedSourceFile.contents = prettier.format(emittedSourceFile.contents, {

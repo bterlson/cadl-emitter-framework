@@ -1,34 +1,30 @@
 import {
   AssetEmitter,
   code,
-  ContextState,
   createEmitterContext,
   Declaration,
-  EmitContext,
   EmitEntity,
   EmittedSourceFile,
   Scope,
   SourceFile,
-  SourceFileScope,
   TypeEmitter,
-  CodeBuilder,
+  StringBuilder,
   Context,
-  EmitEntityOrString,
-  CadlDeclaration
+  CadlDeclaration,
+  EmitterOutput,
+  CodeTypeEmitter,
+  Placeholder,
+  ObjectBuilder,
+  ArrayBuilder
 } from "../src/index.js";
 import { TypeScriptInterfaceEmitter } from "../src/TypescriptEmitter.js";
-import { emitCadl, emitCadlFile, getHostForCadlFile } from "./host.js";
+import { emitCadl, getHostForCadlFile } from "./host.js";
 import {
-  getIntrinsicModelName,
   Model,
   navigateProgram,
-  getDoc,
-  DecoratorContext,
   Type,
   ModelProperty,
-  Namespace,
   Program,
-  createDiagnosticCollector,
   Union,
   Enum,
   Interface,
@@ -77,13 +73,30 @@ class SingleFileEmitter extends TypeScriptInterfaceEmitter {
     const outputFile = this.emitter.createSourceFile("cadl-output/output.ts");
     return { scope: outputFile.globalScope };
   }
+
+  operationReturnTypeReferenceContext(
+    operation: Operation,
+    returnType: Type
+  ): Context {
+    return {
+      fromOperation: true,
+    };
+  }
+
+  modelDeclaration(model: Model, name: string): EmitterOutput<string> {
+    const newName = this.emitter.getContext().fromOperation
+      ? name + "FromOperation"
+      : name;
+    return super.modelDeclaration(model, newName);
+  }
 }
 
-
 async function emitCadlToTs(code: string) {
-  const emitter = await emitCadl(SingleFileEmitter, code);
+  const emitter = await emitCadl(SingleFileEmitter, code, {}, false);
 
-  const sf = await emitter.getProgram().host.readFile("./cadl-output/output.ts");
+  const sf = await emitter
+    .getProgram()
+    .host.readFile("./cadl-output/output.ts");
   return sf.text;
 }
 
@@ -96,7 +109,7 @@ describe("typescript emitter", () => {
         },
       }
     `);
-    
+
     assert.match(contents, /export interface A/);
     assert.match(contents, /x: \{ y: string \}/);
   });
@@ -168,7 +181,7 @@ describe("typescript emitter", () => {
       }
 
       interface TemplateThings extends Template<string> {}
-    `)
+    `);
 
     assert.match(contents, /export interface Things/);
     assert.match(contents, /read\(x: string\): string/);
@@ -224,7 +237,7 @@ describe("typescript emitter", () => {
     assert.match(contents, /export type TUstring = string \| null/);
   });
 
-  it.only("emits tuple types", async () => {
+  it("emits tuple types", async () => {
     const contents = await emitCadlToTs(`
       model Foo {
         x: [string, int32];
@@ -239,7 +252,6 @@ describe("typescript emitter", () => {
     const program = host.program;
     const context = createEmitterContext(host.program);
 
-
     const emitter = context.createAssetEmitter(
       SingleFileEmitter,
       context.AssetTag.language("typescript")
@@ -250,7 +262,9 @@ describe("typescript emitter", () => {
 
     const files = await host.program.host.readDir("./cadl-output");
     assert.strictEqual(files.length, 1);
-    const contents = (await host.program.host.readFile("./cadl-output/output.ts")).text;
+    const contents = (
+      await host.program.host.readFile("./cadl-output/output.ts")
+    ).text;
     // some light assertions
     assert.match(contents, /export interface Basic/);
     assert.match(contents, /export interface HasRef/);
@@ -291,7 +305,9 @@ describe("typescript emitter", () => {
 
       #declarationContext(decl: CadlDeclaration) {
         const name = this.emitter.emitDeclarationName(decl);
-        const outputFile = this.emitter.createSourceFile(`cadl-output/${name}.ts`);
+        const outputFile = this.emitter.createSourceFile(
+          `cadl-output/${name}.ts`
+        );
 
         return { scope: outputFile.globalScope };
       }
@@ -308,37 +324,36 @@ describe("typescript emitter", () => {
 
     const files = new Set(await host.program.host.readDir("./cadl-output"));
     [
-      'Basic.ts',
-      'RefsOtherModel.ts',
-      'HasNestedLiteral.ts',
-      'HasArrayProperty.ts',
-      'IsArray.ts',
-      'Derived.ts',
-      'HasDoc.ts',
-      'HasTemplates.ts',
-      'TemplateBasic.ts',
-      'IsTemplate.ts',
-      'HasRef.ts',
-      'SomeOp.ts',
-      'MyEnum.ts',
-      'UnionDecl.ts',
-      'MyInterface.ts'
-    ].forEach(file => {
+      "Basic.ts",
+      "RefsOtherModel.ts",
+      "HasNestedLiteral.ts",
+      "HasArrayProperty.ts",
+      "IsArray.ts",
+      "Derived.ts",
+      "HasDoc.ts",
+      "HasTemplates.ts",
+      "TemplateBasic.ts",
+      "IsTemplate.ts",
+      "HasRef.ts",
+      "SomeOp.ts",
+      "MyEnum.ts",
+      "UnionDecl.ts",
+      "MyInterface.ts",
+    ].forEach((file) => {
       assert(files.has(file));
-    })
+    });
   });
 
-  it.only("emits to namespaces", async () => {
+  it("emits to namespaces", async () => {
     const host = await getHostForCadlFile(testCode);
-    const program = host.program;
     const context = createEmitterContext(host.program);
 
     class NamespacedEmitter extends TypeScriptInterfaceEmitter {
-      private nsByName: Map<string, Scope> = new Map();
+      private nsByName: Map<string, Scope<string>> = new Map();
       programContext(program: Program): Context {
         const outputFile = emitter.createSourceFile("output.ts");
         return {
-          scope: outputFile.globalScope
+          scope: outputFile.globalScope,
         };
       }
 
@@ -360,7 +375,7 @@ describe("typescript emitter", () => {
         };
       }
 
-      sourceFile(sourceFile: SourceFile): EmittedSourceFile {
+      sourceFile(sourceFile: SourceFile<string>): EmittedSourceFile {
         const emittedSourceFile = super.sourceFile(sourceFile);
         emittedSourceFile.contents += emitNamespaces(sourceFile.globalScope);
         emittedSourceFile.contents = prettier.format(
@@ -369,18 +384,18 @@ describe("typescript emitter", () => {
         );
         return emittedSourceFile;
 
-        function emitNamespaces(scope: Scope) {
+        function emitNamespaces(scope: Scope<string>) {
           let res = "";
           for (const childScope of scope.childScopes) {
             res += emitNamespace(childScope);
           }
           return res;
         }
-        function emitNamespace(scope: Scope) {
+        function emitNamespace(scope: Scope<string>) {
           let ns = `namespace ${scope.name} {\n`;
           ns += emitNamespaces(scope);
           for (const decl of scope.declarations) {
-            ns += decl.code + "\n";
+            ns += decl.value + "\n";
           }
           ns += `}\n`;
 
@@ -401,8 +416,6 @@ describe("typescript emitter", () => {
     console.log(host.fs.get("Z:/test/output.ts"));
   });
 
-
-
   it("handles circular references", async () => {
     const host = await getHostForCadlFile(`
       model Foo { prop: Baz }
@@ -417,7 +430,7 @@ describe("typescript emitter", () => {
         return { scope: outputFile.globalScope };
       }
     }
-    const emitter = context.createAssetEmitter(
+    const emitter: AssetEmitter<string> = context.createAssetEmitter(
       SingleFileEmitter,
       context.AssetTag.language("typescript")
     );
@@ -434,22 +447,20 @@ describe("typescript emitter", () => {
     await emitter.writeOutput();
 
     console.log(host.fs.get("Z:/test/output.ts"));
-  })
-
+  });
 });
 
-
 it("handles circular references", async () => {
-  let sourceFile: SourceFile;
-  class TestEmitter extends TypeEmitter {
+  let sourceFile: SourceFile<string>;
+  class TestEmitter extends CodeTypeEmitter {
     programContext(program: Program): Context {
       sourceFile = this.emitter.createSourceFile("hi.txt");
       return {
-        scope: sourceFile.globalScope
-      }
+        scope: sourceFile.globalScope,
+      };
     }
 
-    modelDeclaration(model: Model, name: string): EmitEntity {
+    modelDeclaration(model: Model, name: string): EmitterOutput<string> {
       const result = this.emitter.emitModelProperties(model);
       return this.emitter.result.declaration(
         model.name,
@@ -457,57 +468,63 @@ it("handles circular references", async () => {
       );
     }
 
-    modelProperties(model: Model): EmitEntity {
-      const builder = new CodeBuilder();
+    modelProperties(model: Model): EmitterOutput<string> {
+      const builder = new StringBuilder();
       for (const prop of model.properties.values()) {
         builder.push(code`${this.emitter.emitModelProperty(prop)}`);
       }
       return this.emitter.result.rawCode(builder);
     }
 
-    modelPropertyLiteral(property: ModelProperty): EmitEntity {
-      return this.emitter.result.rawCode(code`${this.emitter.emitTypeReference(property.type)}`);
+    modelPropertyLiteral(property: ModelProperty): EmitterOutput<string> {
+      return this.emitter.result.rawCode(
+        code`${this.emitter.emitTypeReference(property.type)}`
+      );
     }
 
-    sourceFile(sourceFile: SourceFile): EmittedSourceFile {
+    sourceFile(sourceFile: SourceFile<string>): EmittedSourceFile {
       assert.strictEqual(sourceFile.globalScope.declarations.length, 2);
 
       for (const decl of sourceFile.globalScope.declarations) {
         if (decl.name === "Foo") {
-          assert.strictEqual(decl.code, "model references Bar");
+          assert.strictEqual(decl.value, "model references Bar");
         } else {
-          assert.strictEqual(decl.code, "model references Foo");
+          assert.strictEqual(decl.value, "model references Foo");
         }
       }
 
       return {
         contents: "",
-        path: ""
-      }
+        path: "",
+      };
     }
   }
 
-  await emitCadl(TestEmitter, `
+  await emitCadl(
+    TestEmitter,
+    `
     model Bar { bprop: Foo };
     model Foo { fprop: Bar };
-  `, {
-    modelDeclaration: 2,
-    modelProperties: 2,
-    modelPropertyLiteral: 2
-  });
+  `,
+    {
+      modelDeclaration: 2,
+      modelProperties: 2,
+      modelPropertyLiteral: 2,
+    }
+  );
 });
 
 it("handles multiple circular references", async () => {
-  let sourceFile: SourceFile;
-  class TestEmitter extends TypeEmitter {
+  let sourceFile: SourceFile<string>;
+  class TestEmitter extends CodeTypeEmitter {
     programContext(program: Program): Context {
       sourceFile = this.emitter.createSourceFile("hi.txt");
       return {
-        scope: sourceFile.globalScope
-      }
+        scope: sourceFile.globalScope,
+      };
     }
 
-    modelDeclaration(model: Model, name: string): EmitEntity {
+    modelDeclaration(model: Model, name: string): EmitterOutput<string> {
       const result = this.emitter.emitModelProperties(model);
       return this.emitter.result.declaration(
         model.name,
@@ -515,45 +532,175 @@ it("handles multiple circular references", async () => {
       );
     }
 
-    modelProperties(model: Model): EmitEntity {
-      const builder = new CodeBuilder();
+    modelProperties(model: Model): EmitterOutput<string> {
+      const builder = new StringBuilder();
       for (const prop of model.properties.values()) {
         builder.push(code`${this.emitter.emitModelProperty(prop)}`);
       }
       return this.emitter.result.rawCode(builder);
     }
 
-    modelPropertyLiteral(property: ModelProperty): EmitEntity {
-      return this.emitter.result.rawCode(code`${this.emitter.emitTypeReference(property.type)}`);
+    modelPropertyLiteral(property: ModelProperty): EmitterOutput<string> {
+      return this.emitter.result.rawCode(
+        code`${this.emitter.emitTypeReference(property.type)}`
+      );
     }
 
-    sourceFile(sourceFile: SourceFile): EmittedSourceFile {
+    sourceFile(sourceFile: SourceFile<string>): EmittedSourceFile {
       assert.strictEqual(sourceFile.globalScope.declarations.length, 3);
 
       for (const decl of sourceFile.globalScope.declarations) {
         if (decl.name === "Foo") {
-          assert.strictEqual(decl.code, "model references BarBar");
+          assert.strictEqual(decl.value, "model references BarBar");
         } else if (decl.name === "Bar") {
-          assert.strictEqual(decl.code, "model references FooBaz");
+          assert.strictEqual(decl.value, "model references FooBaz");
         } else if (decl.name === "Baz") {
-          assert.strictEqual(decl.code, "model references FooBar");
+          assert.strictEqual(decl.value, "model references FooBar");
         }
       }
 
       return {
         contents: "",
-        path: ""
-      }
+        path: "",
+      };
     }
   }
 
-  await emitCadl(TestEmitter, `
+  await emitCadl(
+    TestEmitter,
+    `
     model Bar { prop: Foo, pro2: Baz };
     model Foo { prop: Bar, prop2: Bar };
     model Baz { prop: Foo, prop2: Bar };
-  `, {
-    modelDeclaration: 3,
-    modelProperties: 3,
-    modelPropertyLiteral: 6
+  `,
+    {
+      modelDeclaration: 3,
+      modelProperties: 3,
+      modelPropertyLiteral: 6,
+    }
+  );
+});
+
+describe("Object emitter", () => {
+  function setValueOrPlaceholder<T>(
+    obj: any,
+    key: string,
+    value: EmitEntity<T>,
+    placeholderMarker: any
+  ) {
+    if (value instanceof Placeholder) {
+      value.onValue((v) => (obj[key] = v));
+      obj[key] = placeholderMarker;
+    } else {
+      obj[key] = value;
+    }
+  }
+
+  function handlePlaceholders<T extends object>(obj: T): T {
+    for (const [key, prop] of Object.entries(obj)) {
+      if (prop instanceof Placeholder) {
+        prop.onValue((v) => (obj[key as keyof T] = v));
+      }
+    }
+
+    return obj;
+  }
+
+  class TestEmitter extends TypeEmitter<object> {
+    programContext(program: Program): Context {
+      const sourceFile = this.emitter.createSourceFile("test.json");
+      return {
+        scope: sourceFile.globalScope,
+      };
+    }
+
+    modelDeclaration(model: Model, name: string): EmitterOutput<object> {
+      const om = new ObjectBuilder({
+        kind: "model",
+        name,
+        members: this.emitter.emitModelProperties(model),
+      });
+
+      return this.emitter.result.declaration(name, om);
+    }
+
+    modelLiteral(model: Model): EmitterOutput<object> {
+      const om = new ObjectBuilder({
+        kind: "anonymous model",
+        members: this.emitter.emitModelProperties(model),
+      });
+
+      return om;
+    }
+    modelProperties(model: Model): EmitterOutput<object> {
+      const members = new ArrayBuilder();
+
+      for (const p of model.properties.values()) {
+        members.push(this.emitter.emitModelProperty(p));
+      }
+
+      return members;
+    }
+
+    modelPropertyLiteral(property: ModelProperty): EmitterOutput<object> {
+      const om = new ObjectBuilder({
+        kind: "modelProperty",
+        name: property.name,
+        type: this.emitter.emitTypeReference(property.type),
+      });
+
+      return om;
+    }
+
+    reference(
+      targetDeclaration: Declaration<object>,
+      pathUp: Scope<object>[],
+      pathDown: Scope<object>[],
+      commonScope: Scope<object> | null
+    ): object | EmitEntity<object> {
+      return { $ref: targetDeclaration.name };
+    }
+
+    sourceFile(sourceFile: SourceFile<object>): EmittedSourceFile {
+      const emittedSourceFile: EmittedSourceFile = {
+        path: sourceFile.path,
+        contents: "",
+      };
+
+      const obj: { declarations: object[] } = { declarations: [] };
+      for (const decl of sourceFile.globalScope.declarations) {
+        console.log("Have decl");
+        if (decl.value instanceof Placeholder) {
+          obj.declarations.push({ placeholder: true });
+        } else {
+          obj.declarations.push(decl.value);
+        }
+      }
+
+      emittedSourceFile.contents = JSON.stringify(obj, null, 4);
+      return emittedSourceFile;
+    }
+  }
+
+  it("emits objects", async () => {
+    const host = await getHostForCadlFile(
+      `
+      model Foo {
+        bar: Bar
+      }
+      model Bar {
+        x: Foo;
+        y: {
+          x: Foo
+        };
+      };
+      `
+    );
+    const context = createEmitterContext(host.program);
+    const assetEmitter = context.createAssetEmitter(TestEmitter);
+    assetEmitter.emitProgram();
+    await assetEmitter.writeOutput();
+    const contents = JSON.parse(host.fs.get("Z:/test/test.json")!);
+    assert.strictEqual(contents.declarations.length, 2);
   });
 });
